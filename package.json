@@ -1,0 +1,53 @@
+{
+	"name": "pharaoh-parser",
+	"version": "1.0.0",
+	"description": "Open-source AST parser used by Pharaoh to extract structural metadata from TypeScript and Python codebases. No source code is ever captured.",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Pharaoh-so/pharaoh-parser.git"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"bin": {
+		"pharaoh-inspect": "./bin/inspect.js"
+	},
+	"exports": {
+		".": "./src/index.ts",
+		"./types": "./src/types.ts",
+		"./tree-sitter": "./src/tree-sitter.ts",
+		"./python": "./src/python-tree-sitter.ts",
+		"./walker": "./src/file-walker.ts",
+		"./modules": "./src/module-detector.ts",
+		"./wasm": "./src/wasm-init.ts",
+		"./shared": "./src/parser-shared.ts"
+	},
+	"files": [
+		"src/",
+		"bin/",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"inspect": "node --import=tsx bin/inspect.js",
+		"lint": "biome check src/ tests/"
+	},
+	"dependencies": {
+		"ignore": "^7.0.5",
+		"tree-sitter-python": "^0.25.0",
+		"tree-sitter-typescript": "^0.23.2",
+		"tsx": "^4.19.0",
+		"web-tree-sitter": "^0.26.5"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
