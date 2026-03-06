@@ -1,4 +1,4 @@
-#!/usr/bin/env node --import=tsx
+#!/usr/bin/env node
 
 /**
  * pharaoh-inspect — See exactly what Pharaoh extracts from your codebase.
@@ -15,7 +15,7 @@
  * exports, complexity scores, and body hashes (one-way SHA-256).
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
 
 // Parse CLI arguments
@@ -34,13 +34,24 @@ if (!repoPath) {
 
 const resolvedPath = resolve(repoPath);
 
+// Validate directory exists
+if (!existsSync(resolvedPath) || !statSync(resolvedPath).isDirectory()) {
+	console.error(`Error: "${resolvedPath}" is not a valid directory.`);
+	process.exit(1);
+}
+
 // Lazy-load heavy deps
-const [{ walkFiles: walk }, { parseFile: parseTsFile }, { parseFile: parsePyFile }] =
-	await Promise.all([
-		import("../src/file-walker.js"),
-		import("../src/tree-sitter.js"),
-		import("../src/python-tree-sitter.js"),
-	]);
+const [
+	{ walkFiles: walk },
+	{ parseFile: parseTsFile },
+	{ parseFile: parsePyFile },
+	{ detectModules },
+] = await Promise.all([
+	import("../src/file-walker.js"),
+	import("../src/tree-sitter.js"),
+	import("../src/python-tree-sitter.js"),
+	import("../src/module-detector.js"),
+]);
 
 // Walk and parse
 const walkedFiles = walk(resolvedPath);
@@ -60,6 +71,15 @@ for (const file of walkedFiles) {
 	}
 }
 
+if (files.length === 0) {
+	console.error(`No TypeScript or Python files found in "${resolvedPath}".`);
+	process.exit(0);
+}
+
+// Detect module boundaries
+const repoName = basename(resolvedPath);
+const modules = detectModules(files, repoName, resolvedPath);
+
 // Read version from package.json
 let version = "unknown";
 try {
@@ -71,12 +91,13 @@ const result = {
 	metadata: {
 		parserVersion: version,
 		repoPath: resolvedPath,
-		repoName: basename(resolvedPath),
+		repoName,
 		fileCount: files.length,
 		parseFailures,
 		timestamp: new Date().toISOString(),
 	},
 	files,
+	modules,
 };
 
 const json = JSON.stringify(result, null, 2);
