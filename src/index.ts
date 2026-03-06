@@ -10,7 +10,11 @@ export { parseFile as parseTypeScriptFile } from "./tree-sitter.js";
 export { parseFile as parsePythonFile } from "./python-tree-sitter.js";
 export { walkFiles, isTestFile, type WalkedFile } from "./file-walker.js";
 export { detectModules, type DetectedModule } from "./module-detector.js";
-export { computeBodyHash, computeComplexity, countParams } from "./parser-shared.js";
+export {
+	computeBodyHash,
+	computeComplexity,
+	countParams,
+} from "./parser-shared.js";
 export {
 	computeClassMetrics,
 	type ParsedFile,
@@ -19,4 +23,10 @@ export {
 	type ParsedImport,
 	type ParsedExport,
 } from "./types.js";
-export { Parser, tsLanguage, tsxLanguage, pyLanguage, type SyntaxNode } from "./wasm-init.js";
+export {
+	Parser,
+	tsLanguage,
+	tsxLanguage,
+	pyLanguage,
+	type SyntaxNode,
+} from "./wasm-init.js";

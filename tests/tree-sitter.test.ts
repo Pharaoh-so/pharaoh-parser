@@ -36,7 +36,9 @@ describe("tree-sitter parser", () => {
 			expect(multiply!.bodyHash).toMatch(/^[0-9a-f]{16}$/);
 			expect(multiply!.paramCount).toBe(2);
 
-			const privateHelper = result.functions.find((f) => f.name === "privateHelper");
+			const privateHelper = result.functions.find(
+				(f) => f.name === "privateHelper",
+			);
 			expect(privateHelper).toBeDefined();
 			expect(privateHelper!.isExported).toBe(false);
 			expect(privateHelper!.bodyHash).toMatch(/^[0-9a-f]{16}$/);
@@ -51,7 +53,10 @@ describe("tree-sitter parser", () => {
 		});
 
 		it("parses User.ts — classes with methods", () => {
-			const result = parseFile(path.join(simpleDir, "src/models/User.ts"), "src/models/User.ts");
+			const result = parseFile(
+				path.join(simpleDir, "src/models/User.ts"),
+				"src/models/User.ts",
+			);
 
 			expect(result.classes).toHaveLength(1);
 			const user = result.classes[0];
@@ -86,7 +91,10 @@ describe("tree-sitter parser", () => {
 		});
 
 		it("parses index.ts — imports and default export", () => {
-			const result = parseFile(path.join(simpleDir, "src/index.ts"), "src/index.ts");
+			const result = parseFile(
+				path.join(simpleDir, "src/index.ts"),
+				"src/index.ts",
+			);
 
 			expect(result.imports).toHaveLength(1);
 			expect(result.imports[0].source).toBe("./utils/helpers");
@@ -107,7 +115,9 @@ describe("tree-sitter parser", () => {
 				"src/services/processor.ts",
 			);
 
-			const processItems = result.functions.find((f) => f.name === "processItems");
+			const processItems = result.functions.find(
+				(f) => f.name === "processItems",
+			);
 			expect(processItems).toBeDefined();
 			expect(processItems!.complexity).toBeGreaterThan(5);
 			expect(processItems!.isAsync).toBe(true);
@@ -119,7 +129,10 @@ describe("tree-sitter parser", () => {
 		});
 
 		it("detects re-exports", () => {
-			const result = parseFile(path.join(complexDir, "src/re-exports.ts"), "src/re-exports.ts");
+			const result = parseFile(
+				path.join(complexDir, "src/re-exports.ts"),
+				"src/re-exports.ts",
+			);
 
 			const reExports = result.exports.filter((e) => e.kind === "re-export");
 			expect(reExports.length).toBeGreaterThanOrEqual(2);
@@ -128,12 +141,19 @@ describe("tree-sitter parser", () => {
 		});
 
 		it("parses type exports", () => {
-			const result = parseFile(path.join(complexDir, "src/types.ts"), "src/types.ts");
-
-			expect(result.exports.some((e) => e.name === "Config" && e.kind === "type")).toBe(true);
-			expect(result.exports.some((e) => e.name === "ProcessResult" && e.kind === "type")).toBe(
-				true,
+			const result = parseFile(
+				path.join(complexDir, "src/types.ts"),
+				"src/types.ts",
 			);
+
+			expect(
+				result.exports.some((e) => e.name === "Config" && e.kind === "type"),
+			).toBe(true);
+			expect(
+				result.exports.some(
+					(e) => e.name === "ProcessResult" && e.kind === "type",
+				),
+			).toBe(true);
 		});
 	});
 });
@@ -169,7 +189,9 @@ describe("JSDoc extraction", () => {
 			"src/utils/helpers.ts",
 		);
 
-		const privateHelper = result.functions.find((f) => f.name === "privateHelper");
+		const privateHelper = result.functions.find(
+			(f) => f.name === "privateHelper",
+		);
 		expect(privateHelper).toBeDefined();
 		expect(privateHelper!.jsdoc).toBeUndefined();
 	});
@@ -208,12 +230,17 @@ describe("file-walker", () => {
 });
 
 describe("dynamic import extraction", () => {
-	const fixtureFile = path.join(FIXTURES_DIR, "dynamic-import-patterns/dynamic-imports.ts");
+	const fixtureFile = path.join(
+		FIXTURES_DIR,
+		"dynamic-import-patterns/dynamic-imports.ts",
+	);
 
 	it("extracts destructured dynamic imports: const { a, b } = await import(...)", () => {
 		const result = parseFile(fixtureFile, "dynamic-imports.ts");
 
-		const destructured = result.imports.find((i) => i.source === "./destructured-module.js");
+		const destructured = result.imports.find(
+			(i) => i.source === "./destructured-module.js",
+		);
 		expect(destructured).toBeDefined();
 		expect(destructured!.symbols).toEqual(["a", "b"]);
 		expect(destructured!.isNamespace).toBe(false);
@@ -223,7 +250,9 @@ describe("dynamic import extraction", () => {
 	it("extracts namespace dynamic imports: const mod = await import(...)", () => {
 		const result = parseFile(fixtureFile, "dynamic-imports.ts");
 
-		const namespace = result.imports.find((i) => i.source === "./namespace-module.js");
+		const namespace = result.imports.find(
+			(i) => i.source === "./namespace-module.js",
+		);
 		expect(namespace).toBeDefined();
 		expect(namespace!.symbols).toEqual(["mod"]);
 		expect(namespace!.isNamespace).toBe(true);
@@ -232,7 +261,9 @@ describe("dynamic import extraction", () => {
 	it("extracts aliased destructured dynamic imports: const { Foo: bar } = await import(...)", () => {
 		const result = parseFile(fixtureFile, "dynamic-imports.ts");
 
-		const aliased = result.imports.find((i) => i.source === "./aliased-module.js");
+		const aliased = result.imports.find(
+			(i) => i.source === "./aliased-module.js",
+		);
 		expect(aliased).toBeDefined();
 		expect(aliased!.symbols).toEqual(["bar"]);
 		expect(aliased!.aliases).toEqual([{ local: "bar", original: "Foo" }]);
@@ -248,7 +279,9 @@ describe("dynamic import extraction", () => {
 	it("preserves static imports alongside dynamic imports", () => {
 		const result = parseFile(fixtureFile, "dynamic-imports.ts");
 
-		const staticImport = result.imports.find((i) => i.source === "./static-module.js");
+		const staticImport = result.imports.find(
+			(i) => i.source === "./static-module.js",
+		);
 		expect(staticImport).toBeDefined();
 		expect(staticImport!.symbols).toEqual(["staticFn"]);
 	});
@@ -282,7 +315,9 @@ describe("module-detector", () => {
 	it("detects modules from parsed files", () => {
 		const simpleDir = path.join(FIXTURES_DIR, "simple-module");
 		const files = walkFiles(simpleDir);
-		const parsedFiles = files.map((f) => parseFile(f.absolutePath, f.relativePath));
+		const parsedFiles = files.map((f) =>
+			parseFile(f.absolutePath, f.relativePath),
+		);
 		const modules = detectModules(parsedFiles, "test-repo");
 
 		expect(modules.length).toBe(3);

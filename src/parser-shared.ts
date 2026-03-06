@@ -13,7 +13,10 @@ import type { SyntaxNode } from "./wasm-init.js";
  * @param emptyBodies - Language-specific strings that represent empty bodies (e.g. "{}" for TS, "pass" for Python).
  * @returns 16-char hex hash, or "" for empty/trivial bodies.
  */
-export function computeBodyHash(node: SyntaxNode, emptyBodies: string[]): string {
+export function computeBodyHash(
+	node: SyntaxNode,
+	emptyBodies: string[],
+): string {
 	const body = node.childForFieldName("body");
 	if (!body || body.text.length === 0) return "";
 

@@ -6,7 +6,10 @@ const FIXTURES_DIR = path.resolve(__dirname, "fixtures");
 const ADVANCED_DIR = path.join(FIXTURES_DIR, "python-advanced");
 
 describe("python parser — decorators", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/decorators.py"), "src/decorators.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/decorators.py"),
+		"src/decorators.py",
+	);
 
 	it("sets language and counts lines", () => {
 		expect(result.language).toBe("python");
@@ -27,7 +30,9 @@ describe("python parser — decorators", () => {
 		expect(logCalls).toBeDefined();
 		expect(logCalls!.isExported).toBe(true);
 		expect(logCalls!.paramCount).toBe(1);
-		expect(logCalls!.jsdoc).toBe("A decorator factory (parameterized decorator).");
+		expect(logCalls!.jsdoc).toBe(
+			"A decorator factory (parameterized decorator).",
+		);
 		expect(logCalls!.signature).toBe("def log_calls(level: str)");
 	});
 
@@ -49,21 +54,27 @@ describe("python parser — decorators", () => {
 	});
 
 	it("extracts @property as a method", () => {
-		const name = result.functions.find((f) => f.name === "name" && f.className === "Service");
+		const name = result.functions.find(
+			(f) => f.name === "name" && f.className === "Service",
+		);
 		expect(name).toBeDefined();
 		expect(name!.paramCount).toBe(0); // self excluded
 		expect(name!.jsdoc).toBe("The service name.");
 	});
 
 	it("extracts methods with custom decorators", () => {
-		const process = result.functions.find((f) => f.name === "process" && f.className === "Service");
+		const process = result.functions.find(
+			(f) => f.name === "process" && f.className === "Service",
+		);
 		expect(process).toBeDefined();
 		expect(process!.paramCount).toBe(1); // self excluded
 		expect(process!.jsdoc).toBe("Process data with a custom decorator.");
 	});
 
 	it("extracts methods with stacked decorators", () => {
-		const handle = result.functions.find((f) => f.name === "handle" && f.className === "Service");
+		const handle = result.functions.find(
+			(f) => f.name === "handle" && f.className === "Service",
+		);
 		expect(handle).toBeDefined();
 		expect(handle!.paramCount).toBe(1); // self excluded
 		expect(handle!.jsdoc).toBe("Handle a request with stacked decorators.");
@@ -73,7 +84,13 @@ describe("python parser — decorators", () => {
 		const service = result.classes.find((c) => c.name === "Service");
 		expect(service).toBeDefined();
 		expect(service!.isExported).toBe(true);
-		expect(service!.methods).toEqual(["create_id", "from_config", "name", "process", "handle"]);
+		expect(service!.methods).toEqual([
+			"create_id",
+			"from_config",
+			"name",
+			"process",
+			"handle",
+		]);
 		expect(service!.loc).toBe(28);
 		expect(service!.complexity).toBe(5);
 	});
@@ -114,7 +131,10 @@ describe("python parser — decorators", () => {
 });
 
 describe("python parser — inheritance", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/inheritance.py"), "src/inheritance.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/inheritance.py"),
+		"src/inheritance.py",
+	);
 
 	it("sets language and counts lines", () => {
 		expect(result.language).toBe("python");
@@ -124,7 +144,15 @@ describe("python parser — inheritance", () => {
 	it("detects 7 classes", () => {
 		expect(result.classes).toHaveLength(7);
 		const names = result.classes.map((c) => c.name);
-		expect(names).toEqual(["Animal", "Dog", "Serializable", "Printable", "SmartDog", "Shape", "Circle"]);
+		expect(names).toEqual([
+			"Animal",
+			"Dog",
+			"Serializable",
+			"Printable",
+			"SmartDog",
+			"Shape",
+			"Circle",
+		]);
 	});
 
 	it("all classes are exported (no __all__, no _ prefix)", () => {
@@ -159,7 +187,9 @@ describe("python parser — inheritance", () => {
 	});
 
 	it("Dog.fetch excludes self from paramCount", () => {
-		const fetch = result.functions.find((f) => f.name === "fetch" && f.className === "Dog");
+		const fetch = result.functions.find(
+			(f) => f.name === "fetch" && f.className === "Dog",
+		);
 		expect(fetch).toBeDefined();
 		expect(fetch!.paramCount).toBe(1);
 		expect(fetch!.jsdoc).toBe("Fetch an item.");
@@ -187,7 +217,9 @@ describe("python parser — inheritance", () => {
 	});
 
 	it("Circle.__init__ has paramCount=1 (self excluded)", () => {
-		const init = result.functions.find((f) => f.name === "__init__" && f.className === "Circle");
+		const init = result.functions.find(
+			(f) => f.name === "__init__" && f.className === "Circle",
+		);
 		expect(init).toBeDefined();
 		expect(init!.paramCount).toBe(1);
 		expect(init!.signature).toContain("radius: float");
@@ -207,7 +239,10 @@ describe("python parser — inheritance", () => {
 });
 
 describe("python parser — nested functions", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/nested.py"), "src/nested.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/nested.py"),
+		"src/nested.py",
+	);
 
 	it("sets language and counts lines", () => {
 		expect(result.language).toBe("python");
@@ -218,11 +253,22 @@ describe("python parser — nested functions", () => {
 		// The parser only extracts top-level and class-level functions.
 		// Inner functions (closures, helpers) are not detected — this is by design.
 		const names = result.functions.map((f) => f.name);
-		expect(names).toEqual(["outer_function", "make_multiplier", "deeply_nested", "method_with_inner"]);
+		expect(names).toEqual([
+			"outer_function",
+			"make_multiplier",
+			"deeply_nested",
+			"method_with_inner",
+		]);
 	});
 
 	it("does NOT detect inner_add, multiplier, level_one, level_two, helper", () => {
-		const innerNames = ["inner_add", "multiplier", "level_one", "level_two", "helper"];
+		const innerNames = [
+			"inner_add",
+			"multiplier",
+			"level_one",
+			"level_two",
+			"helper",
+		];
 		for (const name of innerNames) {
 			expect(result.functions.find((f) => f.name === name)).toBeUndefined();
 		}
@@ -261,12 +307,20 @@ describe("python parser — nested functions", () => {
 
 	it("exports top-level functions and the class", () => {
 		const exportNames = result.exports.map((e) => e.name);
-		expect(exportNames).toEqual(["outer_function", "make_multiplier", "deeply_nested", "WithNestedMethods"]);
+		expect(exportNames).toEqual([
+			"outer_function",
+			"make_multiplier",
+			"deeply_nested",
+			"WithNestedMethods",
+		]);
 	});
 });
 
 describe("python parser — complex imports", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/imports_complex.py"), "src/imports_complex.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/imports_complex.py"),
+		"src/imports_complex.py",
+	);
 
 	it("sets language and counts lines", () => {
 		expect(result.language).toBe("python");
@@ -274,14 +328,18 @@ describe("python parser — complex imports", () => {
 	});
 
 	it("detects plain `import os`", () => {
-		const imp = result.imports.find((i) => i.source === "os" && i.isNamespace === true);
+		const imp = result.imports.find(
+			(i) => i.source === "os" && i.isNamespace === true,
+		);
 		expect(imp).toBeDefined();
 		expect(imp!.symbols).toEqual(["os"]);
 		expect(imp!.line).toBe(8);
 	});
 
 	it("detects aliased `import json as j`", () => {
-		const imp = result.imports.find((i) => i.source === "json" && i.symbols.includes("j"));
+		const imp = result.imports.find(
+			(i) => i.source === "json" && i.symbols.includes("j"),
+		);
 		expect(imp).toBeDefined();
 		expect(imp!.isNamespace).toBe(true);
 		expect(imp!.line).toBe(11);
@@ -307,14 +365,18 @@ describe("python parser — complex imports", () => {
 	});
 
 	it("detects relative import `from . import decorators`", () => {
-		const imp = result.imports.find((i) => i.source === "." && i.symbols.includes("decorators"));
+		const imp = result.imports.find(
+			(i) => i.source === "." && i.symbols.includes("decorators"),
+		);
 		expect(imp).toBeDefined();
 		expect(imp!.isNamespace).toBe(false);
 		expect(imp!.line).toBe(26);
 	});
 
 	it("detects parent relative import `from .. import src`", () => {
-		const imp = result.imports.find((i) => i.source === ".." && i.symbols.includes("src"));
+		const imp = result.imports.find(
+			(i) => i.source === ".." && i.symbols.includes("src"),
+		);
 		expect(imp).toBeDefined();
 		expect(imp!.line).toBe(27);
 	});
@@ -330,7 +392,9 @@ describe("python parser — complex imports", () => {
 	it("does NOT detect conditional imports inside try/except", () => {
 		// The parser only processes top-level children of the module.
 		// Imports inside try/except blocks are NOT detected — this is a known limitation.
-		const ujsonImport = result.imports.find((i) => i.source === "ujson" || i.symbols.includes("json_lib"));
+		const ujsonImport = result.imports.find(
+			(i) => i.source === "ujson" || i.symbols.includes("json_lib"),
+		);
 		expect(ujsonImport).toBeUndefined();
 	});
 
@@ -364,7 +428,10 @@ describe("python parser — complex imports", () => {
 });
 
 describe("python parser — type annotations", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/type_annotations.py"), "src/type_annotations.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/type_annotations.py"),
+		"src/type_annotations.py",
+	);
 
 	it("sets language and counts lines", () => {
 		expect(result.language).toBe("python");
@@ -373,23 +440,33 @@ describe("python parser — type annotations", () => {
 
 	it("preserves complex type annotations in signatures", () => {
 		const optional = result.functions.find((f) => f.name === "simple_optional");
-		expect(optional!.signature).toBe("def simple_optional(x: Optional[int] = None) -> Optional[str]");
+		expect(optional!.signature).toBe(
+			"def simple_optional(x: Optional[int] = None) -> Optional[str]",
+		);
 		expect(optional!.paramCount).toBe(1);
 
 		const union = result.functions.find((f) => f.name === "union_params");
-		expect(union!.signature).toBe("def union_params(value: Union[str, int, float]) -> Union[bool, None]");
+		expect(union!.signature).toBe(
+			"def union_params(value: Union[str, int, float]) -> Union[bool, None]",
+		);
 		expect(union!.paramCount).toBe(1);
 
 		const dict = result.functions.find((f) => f.name === "complex_dict");
-		expect(dict!.signature).toBe("def complex_dict(data: Dict[str, List[int]]) -> Dict[str, Any]");
+		expect(dict!.signature).toBe(
+			"def complex_dict(data: Dict[str, List[int]]) -> Dict[str, Any]",
+		);
 		expect(dict!.paramCount).toBe(1);
 
 		const tuple = result.functions.find((f) => f.name === "tuple_return");
-		expect(tuple!.signature).toBe("def tuple_return(x: int, y: int) -> Tuple[int, int, int]");
+		expect(tuple!.signature).toBe(
+			"def tuple_return(x: int, y: int) -> Tuple[int, int, int]",
+		);
 		expect(tuple!.paramCount).toBe(2);
 
 		const callable = result.functions.find((f) => f.name === "callable_param");
-		expect(callable!.signature).toBe("def callable_param(fn: Callable[[int, int], int], a: int, b: int) -> int");
+		expect(callable!.signature).toBe(
+			"def callable_param(fn: Callable[[int, int], int], a: int, b: int) -> int",
+		);
 		expect(callable!.paramCount).toBe(3);
 	});
 
@@ -408,13 +485,17 @@ describe("python parser — type annotations", () => {
 	});
 
 	it("Container.get excludes self, has paramCount=0", () => {
-		const get = result.functions.find((f) => f.name === "get" && f.className === "Container");
+		const get = result.functions.find(
+			(f) => f.name === "get" && f.className === "Container",
+		);
 		expect(get!.paramCount).toBe(0);
 		expect(get!.signature).toBe("def get(self) -> T");
 	});
 
 	it("Container.map has paramCount=1 (self excluded)", () => {
-		const map = result.functions.find((f) => f.name === "map" && f.className === "Container");
+		const map = result.functions.find(
+			(f) => f.name === "map" && f.className === "Container",
+		);
 		expect(map!.paramCount).toBe(1);
 	});
 
@@ -427,7 +508,9 @@ describe("python parser — type annotations", () => {
 	});
 
 	it("MultiGeneric.__init__ has paramCount=2 (self excluded)", () => {
-		const init = result.functions.find((f) => f.name === "__init__" && f.className === "MultiGeneric");
+		const init = result.functions.find(
+			(f) => f.name === "__init__" && f.className === "MultiGeneric",
+		);
 		expect(init!.paramCount).toBe(2);
 		expect(init!.signature).toContain("key: K, value: V");
 	});
@@ -437,7 +520,10 @@ describe("python parser — type annotations", () => {
 		const clsExports = result.exports.filter((e) => e.kind === "class");
 		expect(fnExports).toHaveLength(5);
 		expect(clsExports).toHaveLength(2);
-		expect(clsExports.map((e) => e.name)).toEqual(["Container", "MultiGeneric"]);
+		expect(clsExports.map((e) => e.name)).toEqual([
+			"Container",
+			"MultiGeneric",
+		]);
 	});
 });
 
@@ -488,7 +574,9 @@ describe("python parser — lambdas, module-level code, class variables, slots",
 	});
 
 	it("WithClassVars.__init__ has paramCount=1 (self excluded)", () => {
-		const init = result.functions.find((f) => f.name === "__init__" && f.className === "WithClassVars");
+		const init = result.functions.find(
+			(f) => f.name === "__init__" && f.className === "WithClassVars",
+		);
 		expect(init!.paramCount).toBe(1);
 	});
 
@@ -501,7 +589,9 @@ describe("python parser — lambdas, module-level code, class variables, slots",
 	});
 
 	it("WithSlots.__init__ has paramCount=3 (self excluded)", () => {
-		const init = result.functions.find((f) => f.name === "__init__" && f.className === "WithSlots");
+		const init = result.functions.find(
+			(f) => f.name === "__init__" && f.className === "WithSlots",
+		);
 		expect(init!.paramCount).toBe(3);
 		expect(init!.signature).toContain("x: int, y: int, z: int");
 	});
@@ -523,7 +613,12 @@ describe("python parser — lambdas, module-level code, class variables, slots",
 
 	it("exports real_function and 3 classes, NOT lambdas or private", () => {
 		const exportNames = result.exports.map((e) => e.name);
-		expect(exportNames).toEqual(["real_function", "WithClassVars", "WithSlots", "EmptyClass"]);
+		expect(exportNames).toEqual([
+			"real_function",
+			"WithClassVars",
+			"WithSlots",
+			"EmptyClass",
+		]);
 	});
 
 	it("has no imports", () => {
@@ -540,7 +635,10 @@ describe("python parser — lambdas, module-level code, class variables, slots",
 });
 
 describe("python parser — __init__.py (package marker)", () => {
-	const result = parseFile(path.join(ADVANCED_DIR, "src/__init__.py"), "src/__init__.py");
+	const result = parseFile(
+		path.join(ADVANCED_DIR, "src/__init__.py"),
+		"src/__init__.py",
+	);
 
 	it("parses empty-ish package init", () => {
 		expect(result.language).toBe("python");

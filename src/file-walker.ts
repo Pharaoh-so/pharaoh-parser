@@ -69,7 +69,10 @@ function walkDir(
 
 		if (entry.isDirectory()) {
 			walkDir(absolutePath, repoRoot, ig, results);
-		} else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+		} else if (
+			entry.isFile() &&
+			SOURCE_EXTENSIONS.has(path.extname(entry.name))
+		) {
 			results.push({ absolutePath, relativePath });
 		}
 	}

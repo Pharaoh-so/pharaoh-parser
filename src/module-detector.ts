@@ -23,7 +23,9 @@ export function detectModules(
 	const moduleMap = new Map<string, DetectedModule>();
 
 	// Detect monorepo workspace packages if repoRoot is provided
-	const workspacePackages = repoRoot ? detectWorkspacePackages(repoRoot) : new Set<string>();
+	const workspacePackages = repoRoot
+		? detectWorkspacePackages(repoRoot)
+		: new Set<string>();
 
 	for (const file of files) {
 		const parts = file.path.split(path.sep);

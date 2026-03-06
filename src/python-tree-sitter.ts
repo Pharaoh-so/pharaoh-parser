@@ -5,14 +5,14 @@ import {
 	countParams as countParamsShared,
 } from "./parser-shared.js";
 import {
-	computeClassMetrics,
 	type ParsedClass,
 	type ParsedExport,
 	type ParsedFile,
 	type ParsedFunction,
 	type ParsedImport,
+	computeClassMetrics,
 } from "./types.js";
-import { Parser, pyLanguage, type SyntaxNode } from "./wasm-init.js";
+import { Parser, type SyntaxNode, pyLanguage } from "./wasm-init.js";
 
 const pyParser = new Parser();
 pyParser.setLanguage(pyLanguage);
@@ -33,7 +33,10 @@ const COMPLEXITY_TYPES = new Set([
 // Boolean operators that add complexity branches
 const COMPLEXITY_OPERATORS = new Set(["and", "or"]);
 
-export function parseFile(absolutePath: string, relativePath: string): ParsedFile {
+export function parseFile(
+	absolutePath: string,
+	relativePath: string,
+): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
 	const tree = pyParser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
@@ -47,7 +50,15 @@ export function parseFile(absolutePath: string, relativePath: string): ParsedFil
 	// Extract __all__ for export detection
 	const allNames = extractDunderAll(tree.rootNode);
 
-	extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
+	extractFromNode(
+		tree.rootNode,
+		source,
+		functions,
+		classes,
+		imports,
+		exports,
+		allNames,
+	);
 
 	return {
 		path: relativePath,
@@ -101,16 +112,31 @@ function extractFromNode(
 	for (const child of node.children) {
 		switch (child.type) {
 			case "function_definition":
-				extractFunction(child, source, functions, exports, allNames, currentClassName);
+				extractFunction(
+					child,
+					source,
+					functions,
+					exports,
+					allNames,
+					currentClassName,
+				);
 				break;
 
 			case "decorated_definition": {
 				// Unwrap: the actual definition is a child
 				const inner = child.children.find(
-					(c) => c.type === "function_definition" || c.type === "class_definition",
+					(c) =>
+						c.type === "function_definition" || c.type === "class_definition",
 				);
 				if (inner?.type === "function_definition") {
-					extractFunction(inner, source, functions, exports, allNames, currentClassName);
+					extractFunction(
+						inner,
+						source,
+						functions,
+						exports,
+						allNames,
+						currentClassName,
+					);
 				} else if (inner?.type === "class_definition") {
 					extractClass(inner, source, classes, functions, exports, allNames);
 				}
@@ -205,7 +231,9 @@ function extractClass(
 					extractFunction(child, source, functions, exports, allNames, name);
 				}
 			} else if (child.type === "decorated_definition") {
-				const inner = child.children.find((c) => c.type === "function_definition");
+				const inner = child.children.find(
+					(c) => c.type === "function_definition",
+				);
 				if (inner) {
 					const methodName = inner.childForFieldName("name");
 					if (methodName) {
@@ -219,7 +247,12 @@ function extractClass(
 
 	const lineStart = node.startPosition.row + 1;
 	const lineEnd = node.endPosition.row + 1;
-	const { loc, complexity } = computeClassMetrics(name, lineStart, lineEnd, functions);
+	const { loc, complexity } = computeClassMetrics(
+		name,
+		lineStart,
+		lineEnd,
+		functions,
+	);
 
 	classes.push({
 		name,
@@ -236,7 +269,10 @@ function extractClass(
 	}
 }
 
-function extractImportStatement(node: SyntaxNode, imports: ParsedImport[]): void {
+function extractImportStatement(
+	node: SyntaxNode,
+	imports: ParsedImport[],
+): void {
 	// `import foo` or `import foo.bar`
 	for (const child of node.children) {
 		if (child.type === "dotted_name") {
@@ -253,7 +289,9 @@ function extractImportStatement(node: SyntaxNode, imports: ParsedImport[]): void
 			if (nameNode) {
 				imports.push({
 					source: nameNode.text,
-					symbols: [aliasNode?.text ?? nameNode.text.split(".").pop() ?? nameNode.text],
+					symbols: [
+						aliasNode?.text ?? nameNode.text.split(".").pop() ?? nameNode.text,
+					],
 					isDefault: false,
 					isNamespace: true,
 					line: node.startPosition.row + 1,
@@ -263,7 +301,10 @@ function extractImportStatement(node: SyntaxNode, imports: ParsedImport[]): void
 	}
 }
 
-function extractImportFromStatement(node: SyntaxNode, imports: ParsedImport[]): void {
+function extractImportFromStatement(
+	node: SyntaxNode,
+	imports: ParsedImport[],
+): void {
 	// `from foo import bar, baz` or `from foo import *` or `from . import x`
 	const moduleNode = node.childForFieldName("module_name");
 	const source = moduleNode?.text ?? "";
@@ -285,12 +326,19 @@ function extractImportFromStatement(node: SyntaxNode, imports: ParsedImport[]): 
 	extractImportNames(node, source, imports);
 }
 
-function extractImportNames(node: SyntaxNode, source: string, imports: ParsedImport[]): void {
+function extractImportNames(
+	node: SyntaxNode,
+	source: string,
+	imports: ParsedImport[],
+): void {
 	const symbols: string[] = [];
 	let isNamespace = false;
 
 	for (const child of node.children) {
-		if (child.type === "dotted_name" && child !== node.childForFieldName("module_name")) {
+		if (
+			child.type === "dotted_name" &&
+			child !== node.childForFieldName("module_name")
+		) {
 			symbols.push(child.text);
 		} else if (child.type === "aliased_import") {
 			const aliasNode = child.childForFieldName("alias");
@@ -326,7 +374,8 @@ function extractDocstring(node: SyntaxNode): string | undefined {
 	if (firstStmt?.type !== "expression_statement") return undefined;
 
 	const expr = firstStmt.firstNamedChild;
-	if (expr?.type !== "string" && expr?.type !== "concatenated_string") return undefined;
+	if (expr?.type !== "string" && expr?.type !== "concatenated_string")
+		return undefined;
 
 	let text = expr.text;
 	// Strip triple-quote delimiters

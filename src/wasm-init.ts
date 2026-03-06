@@ -10,7 +10,9 @@ const require = createRequire(import.meta.url);
 const wasmDir = dirname(require.resolve("web-tree-sitter"));
 // biome-ignore format: keep on one line so knip detects the dependency
 const tsDir = require.resolve("tree-sitter-typescript/package.json").replace(/\/package\.json$/, "");
-const pyDir = require.resolve("tree-sitter-python/package.json").replace(/\/package\.json$/, "");
+const pyDir = require
+	.resolve("tree-sitter-python/package.json")
+	.replace(/\/package\.json$/, "");
 
 // Validate WASM files exist before attempting to load — fail fast with clear diagnostics
 const requiredWasm: [string, string][] = [
@@ -35,9 +37,13 @@ try {
 	);
 }
 
-export const tsLanguage = await Language.load(`${tsDir}/tree-sitter-typescript.wasm`);
+export const tsLanguage = await Language.load(
+	`${tsDir}/tree-sitter-typescript.wasm`,
+);
 export const tsxLanguage = await Language.load(`${tsDir}/tree-sitter-tsx.wasm`);
-export const pyLanguage = await Language.load(`${pyDir}/tree-sitter-python.wasm`);
+export const pyLanguage = await Language.load(
+	`${pyDir}/tree-sitter-python.wasm`,
+);
 
 export { Parser };
 export type SyntaxNode = Node;

@@ -9,7 +9,10 @@ const PYTHON_DIR = path.join(FIXTURES_DIR, "python-simple");
 
 describe("python tree-sitter parser", () => {
 	describe("helpers.py", () => {
-		const result = parseFile(path.join(PYTHON_DIR, "src/utils/helpers.py"), "src/utils/helpers.py");
+		const result = parseFile(
+			path.join(PYTHON_DIR, "src/utils/helpers.py"),
+			"src/utils/helpers.py",
+		);
 
 		it("sets language to python", () => {
 			expect(result.language).toBe("python");
@@ -88,7 +91,10 @@ describe("python tree-sitter parser", () => {
 	});
 
 	describe("user.py — classes with methods", () => {
-		const result = parseFile(path.join(PYTHON_DIR, "src/models/user.py"), "src/models/user.py");
+		const result = parseFile(
+			path.join(PYTHON_DIR, "src/models/user.py"),
+			"src/models/user.py",
+		);
 
 		it("detects class definitions", () => {
 			expect(result.classes.length).toBeGreaterThanOrEqual(1);
@@ -143,21 +149,30 @@ describe("python tree-sitter parser", () => {
 			expect(dcImport).toBeDefined();
 			expect(dcImport!.symbols).toContain("dataclass");
 
-			const helperImport = result.imports.find((i) => i.source.includes("helpers"));
+			const helperImport = result.imports.find((i) =>
+				i.source.includes("helpers"),
+			);
 			expect(helperImport).toBeDefined();
 		});
 	});
 
 	describe("main.py — imports and entry point", () => {
-		const result = parseFile(path.join(PYTHON_DIR, "src/main.py"), "src/main.py");
+		const result = parseFile(
+			path.join(PYTHON_DIR, "src/main.py"),
+			"src/main.py",
+		);
 
 		it("extracts absolute imports", () => {
-			const utilsImport = result.imports.find((i) => i.source === "src.utils.helpers");
+			const utilsImport = result.imports.find(
+				(i) => i.source === "src.utils.helpers",
+			);
 			expect(utilsImport).toBeDefined();
 			expect(utilsImport!.symbols).toContain("add");
 			expect(utilsImport!.symbols).toContain("multiply");
 
-			const modelImport = result.imports.find((i) => i.source === "src.models.user");
+			const modelImport = result.imports.find(
+				(i) => i.source === "src.models.user",
+			);
 			expect(modelImport).toBeDefined();
 			expect(modelImport!.symbols).toContain("User");
 		});
@@ -186,7 +201,9 @@ describe("file-walker with Python files", () => {
 describe("module-detector with Python files", () => {
 	it("detects modules from Python parsed files", () => {
 		const files = walkFiles(PYTHON_DIR);
-		const parsedFiles = files.map((f) => parseFile(f.absolutePath, f.relativePath));
+		const parsedFiles = files.map((f) =>
+			parseFile(f.absolutePath, f.relativePath),
+		);
 		const modules = detectModules(parsedFiles, "test-repo");
 
 		expect(modules.length).toBeGreaterThanOrEqual(2);

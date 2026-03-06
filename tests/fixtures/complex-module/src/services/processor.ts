@@ -1,6 +1,9 @@
 import type { Config } from "../types";
 
-export async function processItems(items: string[], config: Config): Promise<string[]> {
+export async function processItems(
+	items: string[],
+	config: Config,
+): Promise<string[]> {
 	const results: string[] = [];
 
 	for (const item of items) {

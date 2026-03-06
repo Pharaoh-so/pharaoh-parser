@@ -5,14 +5,19 @@ import {
 	countParams as countParamsShared,
 } from "./parser-shared.js";
 import {
-	computeClassMetrics,
 	type ParsedClass,
 	type ParsedExport,
 	type ParsedFile,
 	type ParsedFunction,
 	type ParsedImport,
+	computeClassMetrics,
 } from "./types.js";
-import { Parser, type SyntaxNode, tsLanguage, tsxLanguage } from "./wasm-init.js";
+import {
+	Parser,
+	type SyntaxNode,
+	tsLanguage,
+	tsxLanguage,
+} from "./wasm-init.js";
 
 const tsParser = new Parser();
 tsParser.setLanguage(tsLanguage);
@@ -36,7 +41,10 @@ const COMPLEXITY_TYPES = new Set([
 // Binary expression operators that add complexity
 const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
 
-export function parseFile(absolutePath: string, relativePath: string): ParsedFile {
+export function parseFile(
+	absolutePath: string,
+	relativePath: string,
+): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
 	const isTsx = relativePath.endsWith(".tsx");
 	const parser = isTsx ? tsxParser : tsParser;
@@ -87,7 +95,14 @@ function extractFromNode(
 			break;
 
 		case "export_statement":
-			extractExportStatement(node, source, functions, classes, imports, exports);
+			extractExportStatement(
+				node,
+				source,
+				functions,
+				classes,
+				imports,
+				exports,
+			);
 			return; // Don't recurse — handled inside
 
 		case "import_statement":
@@ -103,7 +118,15 @@ function extractFromNode(
 
 	// Recurse into children (except for nodes handled above)
 	for (const child of node.children) {
-		extractFromNode(child, source, functions, classes, imports, exports, currentClassName);
+		extractFromNode(
+			child,
+			source,
+			functions,
+			classes,
+			imports,
+			exports,
+			currentClassName,
+		);
 	}
 }
 
@@ -145,7 +168,11 @@ export function computeBodyHash(node: SyntaxNode): string {
 	return computeBodyHashShared(node, ["{}"]);
 }
 
-const TS_PARAM_TYPES = ["required_parameter", "optional_parameter", "rest_parameter"];
+const TS_PARAM_TYPES = [
+	"required_parameter",
+	"optional_parameter",
+	"rest_parameter",
+];
 
 export function countParams(node: SyntaxNode): number {
 	return countParamsShared(node, TS_PARAM_TYPES);
@@ -159,7 +186,9 @@ function buildFunctionMetadata(node: SyntaxNode, source: string) {
 	const paramCount = countParams(node);
 	const errorFlow = detectErrorFlow(node);
 	const jsdoc = extractJSDoc(node);
-	const isAsync = source.slice(node.startIndex, node.endIndex).startsWith("async");
+	const isAsync = source
+		.slice(node.startIndex, node.endIndex)
+		.startsWith("async");
 	return {
 		signature,
 		lineStart: node.startPosition.row + 1,
@@ -244,7 +273,10 @@ function extractClass(
 					if (valueNode) extendsName = valueNode.text;
 				} else if (clause.type === "implements_clause") {
 					for (const typeNode of clause.children) {
-						if (typeNode.type === "type_identifier" || typeNode.type === "generic_type") {
+						if (
+							typeNode.type === "type_identifier" ||
+							typeNode.type === "generic_type"
+						) {
 							implementsNames.push(typeNode.text);
 						}
 					}
@@ -269,7 +301,12 @@ function extractClass(
 
 	const lineStart = node.startPosition.row + 1;
 	const lineEnd = node.endPosition.row + 1;
-	const { loc, complexity } = computeClassMetrics(name, lineStart, lineEnd, functions);
+	const { loc, complexity } = computeClassMetrics(
+		name,
+		lineStart,
+		lineEnd,
+		functions,
+	);
 
 	classes.push({
 		name,
@@ -307,7 +344,9 @@ function extractVariableDeclaration(
 		if (valueNode.type === "arrow_function") {
 			// Arrow functions assigned to const/let/var → treat as functions
 			const name = nameNode.text;
-			const isAsync = source.slice(valueNode.startIndex, valueNode.endIndex).startsWith("async");
+			const isAsync = source
+				.slice(valueNode.startIndex, valueNode.endIndex)
+				.startsWith("async");
 			const jsdoc = extractJSDoc(node);
 
 			functions.push({
@@ -356,7 +395,9 @@ function extractExportStatement(
 	const isDefault = node.children.some((c) => c.type === "default");
 
 	// Handle: export * from './foo' (star re-export → import edge with namespace wildcard)
-	const sourceNode = node.children.find((c) => c.type === "string" || c.type === "string_fragment");
+	const sourceNode = node.children.find(
+		(c) => c.type === "string" || c.type === "string_fragment",
+	);
 	const hasStar = node.children.some((c) => c.type === "*");
 	if (hasStar && sourceNode) {
 		const sourceText = sourceNode.text.replace(/['"]/g, "");
@@ -379,12 +420,19 @@ function extractExportStatement(
 
 		for (const spec of exportClause.children) {
 			if (spec.type === "export_specifier") {
-				const nameNode = spec.childForFieldName("name") ?? spec.childForFieldName("alias");
+				const nameNode =
+					spec.childForFieldName("name") ?? spec.childForFieldName("alias");
 				if (nameNode) {
-					exports.push({ name: nameNode.text, kind: "re-export", isDefault: false });
+					exports.push({
+						name: nameNode.text,
+						kind: "re-export",
+						isDefault: false,
+					});
 					// Use the original name (not alias) for the import edge
 					const originalName = spec.childForFieldName("name");
-					reExportSymbols.push(originalName ? originalName.text : nameNode.text);
+					reExportSymbols.push(
+						originalName ? originalName.text : nameNode.text,
+					);
 				}
 			}
 		}
@@ -490,7 +538,10 @@ function extractImport(node: SyntaxNode, imports: ParsedImport[]): void {
 							if (aliasNode && nameNode) {
 								// Renamed: `import { Foo as Bar }` → symbol is "Bar" (local name)
 								symbols.push(aliasNode.text);
-								aliases.push({ local: aliasNode.text, original: nameNode.text });
+								aliases.push({
+									local: aliasNode.text,
+									original: nameNode.text,
+								});
 							} else if (nameNode) {
 								symbols.push(nameNode.text);
 							}
@@ -498,7 +549,9 @@ function extractImport(node: SyntaxNode, imports: ParsedImport[]): void {
 					}
 				} else if (clauseChild.type === "namespace_import") {
 					isNamespace = true;
-					const aliasNode = clauseChild.children.find((c) => c.type === "identifier");
+					const aliasNode = clauseChild.children.find(
+						(c) => c.type === "identifier",
+					);
 					if (aliasNode) symbols.push(aliasNode.text);
 				}
 			}
@@ -522,7 +575,10 @@ function extractImport(node: SyntaxNode, imports: ParsedImport[]): void {
  * and `const mod = await import("./path")` (namespace).
  * Bare `await import(...)` without assignment produces no ParsedImport (no symbols to match).
  */
-function extractDynamicImports(node: SyntaxNode, imports: ParsedImport[]): void {
+function extractDynamicImports(
+	node: SyntaxNode,
+	imports: ParsedImport[],
+): void {
 	for (const declarator of node.children) {
 		if (declarator.type !== "variable_declarator") continue;
 
@@ -533,7 +589,9 @@ function extractDynamicImports(node: SyntaxNode, imports: ParsedImport[]): void 
 		// value must be: await_expression → call_expression where function is `import`
 		if (valueNode.type !== "await_expression") continue;
 
-		const callExpr = valueNode.children.find((c) => c.type === "call_expression");
+		const callExpr = valueNode.children.find(
+			(c) => c.type === "call_expression",
+		);
 		if (!callExpr) continue;
 
 		const funcNode = callExpr.childForFieldName("function");
@@ -592,7 +650,9 @@ function buildSignature(node: SyntaxNode, source: string): string {
 	const nameNode = node.childForFieldName("name");
 	const paramsNode = node.childForFieldName("parameters");
 	const returnTypeNode = node.childForFieldName("return_type");
-	const isAsync = source.slice(node.startIndex, node.endIndex).startsWith("async");
+	const isAsync = source
+		.slice(node.startIndex, node.endIndex)
+		.startsWith("async");
 
 	let sig = "";
 	if (isAsync) sig += "async ";
@@ -603,10 +663,16 @@ function buildSignature(node: SyntaxNode, source: string): string {
 	return sig;
 }
 
-function buildArrowSignature(nameNode: SyntaxNode, arrowNode: SyntaxNode, source: string): string {
+function buildArrowSignature(
+	nameNode: SyntaxNode,
+	arrowNode: SyntaxNode,
+	source: string,
+): string {
 	const paramsNode = arrowNode.childForFieldName("parameters");
 	const returnTypeNode = arrowNode.childForFieldName("return_type");
-	const isAsync = source.slice(arrowNode.startIndex, arrowNode.endIndex).startsWith("async");
+	const isAsync = source
+		.slice(arrowNode.startIndex, arrowNode.endIndex)
+		.startsWith("async");
 
 	let sig = "";
 	if (isAsync) sig += "async ";
@@ -627,7 +693,10 @@ function computeComplexity(node: SyntaxNode): number {
 }
 
 /** Detect whether a function throws or has try-catch blocks. */
-function detectErrorFlow(node: SyntaxNode): { throws: boolean; hasTryCatch: boolean } {
+function detectErrorFlow(node: SyntaxNode): {
+	throws: boolean;
+	hasTryCatch: boolean;
+} {
 	let throws = false;
 	let hasTryCatch = false;
 
