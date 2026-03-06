@@ -1,0 +1,1 @@
+{"version":3,"file":"file-walker.d.ts","sourceRoot":"","sources":["../src/file-walker.ts"],"names":[],"mappings":"AAwBA,uEAAuE;AACvE,wBAAgB,UAAU,CAAC,QAAQ,EAAE,MAAM,GAAG,OAAO,CAEpD;AAED,MAAM,WAAW,UAAU;IAC1B,YAAY,EAAE,MAAM,CAAC;IACrB,YAAY,EAAE,MAAM,CAAC;CACrB;AAED,wBAAgB,SAAS,CAAC,QAAQ,EAAE,MAAM,GAAG,UAAU,EAAE,CAgBxD"}
