@@ -57,7 +57,6 @@
 	],
 	"scripts": {
 		"build": "tsc",
-		"prepare": "tsc",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"inspect": "node --import=tsx bin/inspect.js",
