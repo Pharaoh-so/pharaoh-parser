@@ -1,0 +1,30 @@
+name: Notify Downstream
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  dispatch:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate token exists
+        env:
+          HAS_TOKEN: ${{ secrets.DOWNSTREAM_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::DOWNSTREAM_TOKEN secret is not set. Create a fine-grained PAT with Contents and Pull Requests permissions on Pharaoh-so/pharaoh, then add it as a repository secret named DOWNSTREAM_TOKEN."
+            exit 1
+          fi
+
+      - name: Dispatch to pharaoh
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DOWNSTREAM_TOKEN }}
+          repository: Pharaoh-so/pharaoh
+          event-type: parser-updated
+          client-payload: '{"sha": "${{ github.event.workflow_run.head_sha }}", "ref": "${{ github.event.workflow_run.head_branch }}"}'
