@@ -41,13 +41,20 @@ const COMPLEXITY_TYPES = new Set([
 // Binary expression operators that add complexity
 const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
 
+/** File extensions that should use the TSX parser (supports JSX syntax). */
+const JSX_EXTENSIONS = new Set([".tsx", ".jsx"]);
+
+/** File extensions treated as JavaScript (parsed with TS grammar, which is a superset). */
+const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
+
 export function parseFile(
 	absolutePath: string,
 	relativePath: string,
 ): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
-	const isTsx = relativePath.endsWith(".tsx");
-	const parser = isTsx ? tsxParser : tsParser;
+	const ext = relativePath.slice(relativePath.lastIndexOf("."));
+	const useJsx = JSX_EXTENSIONS.has(ext);
+	const parser = useJsx ? tsxParser : tsParser;
 	const tree = parser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
 	const lines = source.split("\n");
@@ -59,9 +66,18 @@ export function parseFile(
 
 	extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
 
+	// Determine language from extension
+	const isJs = JS_EXTENSIONS.has(ext);
+	let language: ParsedFile["language"];
+	if (isJs) {
+		language = ext === ".jsx" ? "jsx" : "javascript";
+	} else {
+		language = ext === ".tsx" ? "tsx" : "typescript";
+	}
+
 	return {
 		path: relativePath,
-		language: isTsx ? "tsx" : "typescript",
+		language,
 		loc: lines.length,
 		functions,
 		classes,
@@ -92,6 +108,7 @@ function extractFromNode(
 		case "variable_declaration":
 			extractVariableDeclaration(node, source, functions, exports);
 			extractDynamicImports(node, imports);
+			extractRequireCalls(node, imports);
 			break;
 
 		case "export_statement":
@@ -113,6 +130,10 @@ function extractFromNode(
 			if (currentClassName) {
 				extractMethod(node, source, functions, currentClassName);
 			}
+			break;
+
+		case "enum_declaration":
+			extractEnum(node, exports);
 			break;
 	}
 
@@ -325,6 +346,20 @@ function extractClass(
 	}
 }
 
+/**
+ * Extract enum declarations as type exports.
+ * Handles both `enum Foo { ... }` and `const enum Foo { ... }`.
+ */
+function extractEnum(node: SyntaxNode, exports: ParsedExport[]): void {
+	const nameNode = node.childForFieldName("name");
+	if (!nameNode) return;
+
+	const isExported = node.parent?.type === "export_statement";
+	if (isExported) {
+		exports.push({ name: nameNode.text, kind: "type", isDefault: false });
+	}
+}
+
 function extractVariableDeclaration(
 	node: SyntaxNode,
 	source: string,
@@ -380,6 +415,72 @@ function extractVariableDeclaration(
 						: undefined,
 			});
 		}
+	}
+}
+
+/**
+ * Extract CommonJS require() calls as imports.
+ * Handles: `const x = require("./foo")` (namespace)
+ * and `const { a, b } = require("./foo")` (destructured).
+ * Only static string arguments are handled — dynamic require() is skipped.
+ */
+function extractRequireCalls(node: SyntaxNode, imports: ParsedImport[]): void {
+	for (const declarator of node.children) {
+		if (declarator.type !== "variable_declarator") continue;
+
+		const nameNode = declarator.childForFieldName("name");
+		const valueNode = declarator.childForFieldName("value");
+		if (!nameNode || !valueNode) continue;
+
+		// value must be a call_expression where function is `require`
+		if (valueNode.type !== "call_expression") continue;
+
+		const funcNode = valueNode.childForFieldName("function");
+		if (
+			!funcNode ||
+			funcNode.type !== "identifier" ||
+			funcNode.text !== "require"
+		)
+			continue;
+
+		// Extract the source path from arguments
+		const argsNode = valueNode.childForFieldName("arguments");
+		if (!argsNode) continue;
+
+		const stringNode = argsNode.children.find((c) => c.type === "string");
+		if (!stringNode) continue;
+
+		const source = stringNode.text.replace(/['"]/g, "");
+
+		// Extract symbols from the binding pattern
+		const symbols: string[] = [];
+		let isNamespace = false;
+
+		if (nameNode.type === "object_pattern") {
+			// const { a, b } = require("./foo")
+			for (const child of nameNode.children) {
+				if (child.type === "shorthand_property_identifier_pattern") {
+					symbols.push(child.text);
+				} else if (child.type === "pair_pattern") {
+					const keyNode = child.childForFieldName("key");
+					if (keyNode) symbols.push(keyNode.text);
+				}
+			}
+		} else if (nameNode.type === "identifier") {
+			// const x = require("./foo")
+			isNamespace = true;
+			symbols.push(nameNode.text);
+		}
+
+		if (symbols.length === 0) continue;
+
+		imports.push({
+			source,
+			symbols,
+			isDefault: false,
+			isNamespace,
+			line: node.startPosition.row + 1,
+		});
 	}
 }
 
@@ -485,6 +586,9 @@ function extractExportStatement(
 				}
 				break;
 			}
+			case "enum_declaration":
+				extractEnum(child, exports);
+				break;
 		}
 	}
 

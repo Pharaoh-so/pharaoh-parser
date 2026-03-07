@@ -17,7 +17,15 @@ const HARDCODED_IGNORES = [
 	".pytest_cache",
 ];
 
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".py"]);
+const SOURCE_EXTENSIONS = new Set([
+	".ts",
+	".tsx",
+	".js",
+	".jsx",
+	".mjs",
+	".cjs",
+	".py",
+]);
 
 const TEST_PATH_RE =
 	/(?:\.(test|spec)\.(ts|tsx|js|jsx)$|(?:^|\/)(__tests__|__mocks__|fixtures)\/|^tests?\/|\/tests?\/|\.stories\.(ts|tsx)$)/;

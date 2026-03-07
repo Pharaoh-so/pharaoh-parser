@@ -19,6 +19,16 @@
           }
         }
       }
+    },
+    {
+      "include": ["tests/fixtures/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNodejsImportProtocol": "off"
+          }
+        }
+      }
     }
   ]
 }
