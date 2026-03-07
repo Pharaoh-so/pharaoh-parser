@@ -99,6 +99,23 @@ function extractDunderAll(root: SyntaxNode): Set<string> | null {
 	return null;
 }
 
+/**
+ * Extract decorator strings from a decorated_definition node.
+ * Returns decorator text (e.g. "@staticmethod", "@app.route(\"/api\")").
+ * Truncates each decorator to 500 chars to prevent graph bloat.
+ */
+function extractDecorators(decoratedNode: SyntaxNode): string[] {
+	const decorators: string[] = [];
+	for (const child of decoratedNode.children) {
+		if (child.type === "decorator") {
+			let text = child.text.trim();
+			if (text.length > 500) text = `${text.slice(0, 497)}...`;
+			decorators.push(text);
+		}
+	}
+	return decorators;
+}
+
 function extractFromNode(
 	node: SyntaxNode,
 	source: string,
@@ -128,6 +145,7 @@ function extractFromNode(
 					(c) =>
 						c.type === "function_definition" || c.type === "class_definition",
 				);
+				const decorators = extractDecorators(child);
 				if (inner?.type === "function_definition") {
 					extractFunction(
 						inner,
@@ -136,6 +154,7 @@ function extractFromNode(
 						exports,
 						allNames,
 						currentClassName,
+						decorators,
 					);
 				} else if (inner?.type === "class_definition") {
 					extractClass(inner, source, classes, functions, exports, allNames);
@@ -173,6 +192,7 @@ function extractFunction(
 	exports: ParsedExport[],
 	allNames: Set<string> | null,
 	className?: string,
+	decorators?: string[],
 ): void {
 	const nameNode = node.childForFieldName("name");
 	if (!nameNode) return;
@@ -198,6 +218,7 @@ function extractFunction(
 		jsdoc: docstring,
 		bodyHash: computeBodyHash(node),
 		paramCount: countParams(node),
+		...(decorators?.length ? { decorators } : {}),
 	});
 
 	if (isExported) {
@@ -234,11 +255,20 @@ function extractClass(
 				const inner = child.children.find(
 					(c) => c.type === "function_definition",
 				);
+				const decorators = extractDecorators(child);
 				if (inner) {
 					const methodName = inner.childForFieldName("name");
 					if (methodName) {
 						methods.push(methodName.text);
-						extractFunction(inner, source, functions, exports, allNames, name);
+						extractFunction(
+							inner,
+							source,
+							functions,
+							exports,
+							allNames,
+							name,
+							decorators,
+						);
 					}
 				}
 			}

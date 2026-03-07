@@ -13,6 +13,8 @@ export interface ParsedFunction {
 	paramCount: number;
 	throws?: boolean;
 	hasTryCatch?: boolean;
+	/** Decorator strings for Python functions (e.g. ["@staticmethod", "@app.route(\"/api\")"]) */
+	decorators?: string[];
 }
 
 export interface ParsedClass {
@@ -69,7 +71,7 @@ export function computeClassMetrics(
 
 export interface ParsedFile {
 	path: string;
-	language: "typescript" | "tsx" | "python";
+	language: "typescript" | "tsx" | "python" | "javascript" | "jsx";
 	loc: number;
 	functions: ParsedFunction[];
 	classes: ParsedClass[];
