@@ -54,3 +54,15 @@ export const SIZES = ["sm", "md", "lg"] as const;
 let mutableVal = "x",
 	anotherVal = "y";
 export { mutableVal, anotherVal };
+
+// Secret-named constants — should be skipped by parser (defense-in-depth)
+export const DATABASE_PASSWORD = "hunter2";
+export const STRIPE_SECRET_KEY = "sk_test_abc123";
+const AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE";
+export const AUTH_TOKEN = "eyJhbGciOiJIUzI1NiJ9";
+export const API_KEY = "pk_live_xxx";
+export const JWT_CREDENTIAL = "my-credential-value";
+// Non-secret constants that happen to contain partial matches should be KEPT
+export const KEYBOARD_SHORTCUT = "Ctrl+K";
+export const TOKEN_LIMIT = 4096;
+export const SECRET_SAUCE_RECIPE = "tomato";
