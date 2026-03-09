@@ -13,6 +13,14 @@ export interface ParsedFunction {
     paramCount: number;
     throws?: boolean;
     hasTryCatch?: boolean;
+    /** Decorator strings for Python functions (e.g. ["@staticmethod", "@app.route(\"/api\")"]) */
+    decorators?: string[];
+    /** Destructured parameter names (e.g. ["variant", "size", "onClick"] from `{ variant, size, onClick }: ButtonProps`). */
+    destructuredParams?: string[];
+    /** Type annotation of the first parameter (e.g. "ButtonProps" from `props: ButtonProps`). */
+    propsType?: string;
+    /** Curated intrinsic HTML elements found in JSX (e.g. ["button", "input"]). */
+    jsxIntrinsics?: string[];
 }
 export interface ParsedClass {
     name: string;
@@ -54,13 +62,25 @@ export declare function computeClassMetrics(className: string, lineStart: number
     loc: number;
     complexity: number;
 };
+/** A top-level `const` declaration extracted from a file. */
+export interface ParsedConstant {
+    name: string;
+    /** Scalar value if extractable (string/number/simple template literal ≤128 chars), null otherwise. */
+    value: string | null;
+    /** Type annotation if present (e.g. "string", "Record<string, string>"). */
+    typeAnnotation: string | null;
+    isExported: boolean;
+    lineStart: number;
+    lineEnd: number;
+}
 export interface ParsedFile {
     path: string;
-    language: "typescript" | "tsx" | "python";
+    language: "typescript" | "tsx" | "python" | "javascript" | "jsx";
     loc: number;
     functions: ParsedFunction[];
     classes: ParsedClass[];
     imports: ParsedImport[];
     exports: ParsedExport[];
+    constants?: ParsedConstant[];
 }
 //# sourceMappingURL=types.d.ts.map

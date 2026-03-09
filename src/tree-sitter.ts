@@ -6,6 +6,7 @@ import {
 } from "./parser-shared.js";
 import {
 	type ParsedClass,
+	type ParsedConstant,
 	type ParsedExport,
 	type ParsedFile,
 	type ParsedFunction,
@@ -47,6 +48,98 @@ const JSX_EXTENSIONS = new Set([".tsx", ".jsx"]);
 /** File extensions treated as JavaScript (parsed with TS grammar, which is a superset). */
 const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 
+/** Max length for extractable scalar constant values. */
+const MAX_CONSTANT_VALUE_LENGTH = 128;
+
+/**
+ * Extract top-level const declarations from the program root.
+ * Only captures constants at module scope — not inside functions.
+ */
+function extractConstants(
+	rootNode: SyntaxNode,
+	exports: ParsedExport[],
+): ParsedConstant[] {
+	const constants: ParsedConstant[] = [];
+
+	function processDeclaration(node: SyntaxNode, isExported: boolean): void {
+		// Only const declarations (not let/var)
+		if (!node.children.some((c) => c.type === "const")) return;
+
+		for (const declarator of node.children) {
+			if (declarator.type !== "variable_declarator") continue;
+
+			const nameNode = declarator.childForFieldName("name");
+			if (!nameNode || nameNode.type !== "identifier") continue;
+
+			const valueNode = declarator.childForFieldName("value");
+
+			// Skip arrow functions — already handled as ParsedFunction
+			if (valueNode?.type === "arrow_function") continue;
+
+			// Extract scalar value
+			let value: string | null = null;
+			if (valueNode) {
+				if (valueNode.type === "string" || valueNode.type === "number") {
+					const raw = valueNode.text;
+					if (raw.length <= MAX_CONSTANT_VALUE_LENGTH) {
+						// Strip quotes from strings
+						value =
+							valueNode.type === "string"
+								? raw.replace(/^['"`]|['"`]$/g, "")
+								: raw;
+					}
+				} else if (
+					valueNode.type === "template_string" &&
+					!valueNode.children.some((c) => c.type === "template_substitution")
+				) {
+					const raw = valueNode.text.replace(/^`|`$/g, "");
+					if (raw.length <= MAX_CONSTANT_VALUE_LENGTH) {
+						value = raw;
+					}
+				}
+			}
+
+			// Extract type annotation
+			let typeAnnotation: string | null = null;
+			const typeNode = declarator.childForFieldName("type");
+			if (typeNode) {
+				// type_annotation wraps `: Type` — strip the leading colon
+				typeAnnotation = typeNode.text.replace(/^:\s*/, "");
+			}
+
+			constants.push({
+				name: nameNode.text,
+				value,
+				typeAnnotation,
+				isExported,
+				lineStart: node.startPosition.row + 1,
+				lineEnd: node.endPosition.row + 1,
+			});
+		}
+	}
+
+	// Walk only top-level children (not recursive)
+	for (const child of rootNode.children) {
+		if (
+			child.type === "lexical_declaration" ||
+			child.type === "variable_declaration"
+		) {
+			processDeclaration(child, false);
+		} else if (child.type === "export_statement") {
+			for (const inner of child.children) {
+				if (
+					inner.type === "lexical_declaration" ||
+					inner.type === "variable_declaration"
+				) {
+					processDeclaration(inner, true);
+				}
+			}
+		}
+	}
+
+	return constants;
+}
+
 export function parseFile(
 	absolutePath: string,
 	relativePath: string,
@@ -66,6 +159,9 @@ export function parseFile(
 
 	extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
 
+	// Extract top-level constants (separate pass — only program scope)
+	const constants = extractConstants(tree.rootNode, exports);
+
 	// Determine language from extension
 	const isJs = JS_EXTENSIONS.has(ext);
 	let language: ParsedFile["language"];
@@ -83,6 +179,7 @@ export function parseFile(
 		classes,
 		imports,
 		exports,
+		...(constants.length > 0 ? { constants } : {}),
 	};
 }
 
@@ -199,6 +296,129 @@ export function countParams(node: SyntaxNode): number {
 	return countParamsShared(node, TS_PARAM_TYPES);
 }
 
+/** Curated intrinsic HTML elements commonly wrapped by design system components. */
+const JSX_INTRINSIC_SET = new Set([
+	"button",
+	"input",
+	"select",
+	"textarea",
+	"a",
+	"img",
+	"table",
+	"form",
+	"dialog",
+]);
+
+/**
+ * Extract destructured parameter names from a function's parameter list.
+ * e.g. `({ variant, size, onClick }: ButtonProps)` → ["variant", "size", "onClick"]
+ */
+function extractDestructuredParams(node: SyntaxNode): string[] | undefined {
+	const paramsNode = node.childForFieldName("parameters");
+	if (!paramsNode) return undefined;
+
+	for (const param of paramsNode.children) {
+		if (
+			param.type !== "required_parameter" &&
+			param.type !== "optional_parameter"
+		)
+			continue;
+
+		const pattern = param.childForFieldName("pattern");
+		if (pattern?.type !== "object_pattern") continue;
+
+		const names: string[] = [];
+		for (const child of pattern.children) {
+			if (child.type === "shorthand_property_identifier_pattern") {
+				names.push(child.text);
+			} else if (child.type === "pair_pattern") {
+				const key = child.childForFieldName("key");
+				if (key) names.push(key.text);
+			}
+		}
+		return names.length > 0 ? names : undefined;
+	}
+	return undefined;
+}
+
+/**
+ * Extract the type annotation name from the first parameter.
+ * e.g. `(props: ButtonProps)` → "ButtonProps", `({ x }: Opts)` → "Opts"
+ */
+function extractPropsType(node: SyntaxNode): string | undefined {
+	const paramsNode = node.childForFieldName("parameters");
+	if (!paramsNode) return undefined;
+
+	for (const param of paramsNode.children) {
+		if (
+			param.type !== "required_parameter" &&
+			param.type !== "optional_parameter"
+		)
+			continue;
+
+		const typeNode = param.childForFieldName("type");
+		if (!typeNode) return undefined;
+
+		// type_annotation wraps `: TypeName` — find the type identifier inside
+		for (const child of typeNode.children) {
+			if (child.type === "type_identifier" || child.type === "generic_type") {
+				return child.text;
+			}
+		}
+		return undefined;
+	}
+	return undefined;
+}
+
+/**
+ * Walk a function body and collect curated intrinsic JSX elements.
+ * Returns deduplicated array of lowercase tag names from JSX_INTRINSIC_SET, or undefined.
+ */
+function extractJsxIntrinsics(node: SyntaxNode): string[] | undefined {
+	const bodyNode = node.childForFieldName("body");
+	if (!bodyNode) return undefined;
+
+	const found = new Set<string>();
+
+	function walk(n: SyntaxNode): void {
+		if (
+			n.type === "jsx_opening_element" ||
+			n.type === "jsx_self_closing_element"
+		) {
+			// First named child is the tag name (identifier for intrinsics)
+			const tagNode = n.children.find(
+				(c) => c.type === "identifier" || c.type === "jsx_identifier",
+			);
+			if (tagNode) {
+				const tag = tagNode.text;
+				if (tag === tag.toLowerCase() && JSX_INTRINSIC_SET.has(tag)) {
+					found.add(tag);
+				}
+			}
+		}
+		for (const child of n.children) {
+			walk(child);
+		}
+	}
+
+	walk(bodyNode);
+	return found.size > 0 ? [...found] : undefined;
+}
+
+/** Build optional props metadata (destructuredParams, propsType, jsxIntrinsics) for a function node. */
+function buildPropsMetadata(
+	node: SyntaxNode,
+): Pick<ParsedFunction, "destructuredParams" | "propsType" | "jsxIntrinsics"> {
+	const destructuredParams = extractDestructuredParams(node);
+	const propsType = extractPropsType(node);
+	const jsxIntrinsics = extractJsxIntrinsics(node);
+	return {
+		...(destructuredParams ? { destructuredParams } : {}),
+		...(propsType ? { propsType } : {}),
+		...(jsxIntrinsics ? { jsxIntrinsics } : {}),
+	};
+}
+
 /** Compute shared metadata fields for a function or method node. */
 function buildFunctionMetadata(node: SyntaxNode, source: string) {
 	const signature = buildSignature(node, source);
@@ -241,6 +461,7 @@ function extractFunction(
 	functions.push({
 		name,
 		...buildFunctionMetadata(node, source),
+		...buildPropsMetadata(node),
 		isExported,
 		className,
 	});
@@ -264,6 +485,7 @@ function extractMethod(
 	functions.push({
 		name,
 		...buildFunctionMetadata(node, source),
+		...buildPropsMetadata(node),
 		isExported: false,
 		className,
 	});
@@ -396,6 +618,7 @@ function extractVariableDeclaration(
 				jsdoc,
 				bodyHash: computeBodyHash(valueNode),
 				paramCount: countParams(valueNode),
+				...buildPropsMetadata(valueNode),
 			});
 
 			if (isExported) {

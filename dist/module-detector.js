@@ -8,7 +8,9 @@ import path from "node:path";
 export function detectModules(files, _repoName, repoRoot) {
     const moduleMap = new Map();
     // Detect monorepo workspace packages if repoRoot is provided
-    const workspacePackages = repoRoot ? detectWorkspacePackages(repoRoot) : new Set();
+    const workspacePackages = repoRoot
+        ? detectWorkspacePackages(repoRoot)
+        : new Set();
     for (const file of files) {
         const parts = file.path.split(path.sep);
         let moduleName;

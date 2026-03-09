@@ -22,6 +22,7 @@ export {
 	type ParsedClass,
 	type ParsedImport,
 	type ParsedExport,
+	type ParsedConstant,
 } from "./types.js";
 export {
 	Parser,
