@@ -69,6 +69,23 @@ function extractDunderAll(root) {
     }
     return null;
 }
+/**
+ * Extract decorator strings from a decorated_definition node.
+ * Returns decorator text (e.g. "@staticmethod", "@app.route(\"/api\")").
+ * Truncates each decorator to 500 chars to prevent graph bloat.
+ */
+function extractDecorators(decoratedNode) {
+    const decorators = [];
+    for (const child of decoratedNode.children) {
+        if (child.type === "decorator") {
+            let text = child.text.trim();
+            if (text.length > 500)
+                text = `${text.slice(0, 497)}...`;
+            decorators.push(text);
+        }
+    }
+    return decorators;
+}
 function extractFromNode(node, source, functions, classes, imports, exports, allNames, currentClassName) {
     for (const child of node.children) {
         switch (child.type) {
@@ -78,8 +95,9 @@ function extractFromNode(node, source, functions, classes, imports, exports, all
             case "decorated_definition": {
                 // Unwrap: the actual definition is a child
                 const inner = child.children.find((c) => c.type === "function_definition" || c.type === "class_definition");
+                const decorators = extractDecorators(child);
                 if (inner?.type === "function_definition") {
-                    extractFunction(inner, source, functions, exports, allNames, currentClassName);
+                    extractFunction(inner, source, functions, exports, allNames, currentClassName, decorators);
                 }
                 else if (inner?.type === "class_definition") {
                     extractClass(inner, source, classes, functions, exports, allNames);
@@ -105,7 +123,7 @@ function isPublicName(name, allNames) {
     // No __all__ → public if doesn't start with _
     return !name.startsWith("_");
 }
-function extractFunction(node, _source, functions, exports, allNames, className) {
+function extractFunction(node, _source, functions, exports, allNames, className, decorators) {
     const nameNode = node.childForFieldName("name");
     if (!nameNode)
         return;
@@ -128,6 +146,7 @@ function extractFunction(node, _source, functions, exports, allNames, className)
         jsdoc: docstring,
         bodyHash: computeBodyHash(node),
         paramCount: countParams(node),
+        ...(decorators?.length ? { decorators } : {}),
     });
     if (isExported) {
         exports.push({ name, kind: "function", isDefault: false });
@@ -153,11 +172,12 @@ function extractClass(node, source, classes, functions, exports, allNames) {
             }
             else if (child.type === "decorated_definition") {
                 const inner = child.children.find((c) => c.type === "function_definition");
+                const decorators = extractDecorators(child);
                 if (inner) {
                     const methodName = inner.childForFieldName("name");
                     if (methodName) {
                         methods.push(methodName.text);
-                        extractFunction(inner, source, functions, exports, allNames, name);
+                        extractFunction(inner, source, functions, exports, allNames, name, decorators);
                     }
                 }
             }
@@ -197,7 +217,9 @@ function extractImportStatement(node, imports) {
             if (nameNode) {
                 imports.push({
                     source: nameNode.text,
-                    symbols: [aliasNode?.text ?? nameNode.text.split(".").pop() ?? nameNode.text],
+                    symbols: [
+                        aliasNode?.text ?? nameNode.text.split(".").pop() ?? nameNode.text,
+                    ],
                     isDefault: false,
                     isNamespace: true,
                     line: node.startPosition.row + 1,
@@ -229,7 +251,8 @@ function extractImportNames(node, source, imports) {
     const symbols = [];
     let isNamespace = false;
     for (const child of node.children) {
-        if (child.type === "dotted_name" && child !== node.childForFieldName("module_name")) {
+        if (child.type === "dotted_name" &&
+            child !== node.childForFieldName("module_name")) {
             symbols.push(child.text);
         }
         else if (child.type === "aliased_import") {

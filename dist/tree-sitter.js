@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
-import { Parser, tsLanguage, tsxLanguage } from "./wasm-init.js";
+import { Parser, tsLanguage, tsxLanguage, } from "./wasm-init.js";
 const tsParser = new Parser();
 tsParser.setLanguage(tsLanguage);
 const tsxParser = new Parser();
@@ -20,10 +20,96 @@ const COMPLEXITY_TYPES = new Set([
 ]);
 // Binary expression operators that add complexity
 const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
+/** File extensions that should use the TSX parser (supports JSX syntax). */
+const JSX_EXTENSIONS = new Set([".tsx", ".jsx"]);
+/** File extensions treated as JavaScript (parsed with TS grammar, which is a superset). */
+const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
+/** Max length for extractable scalar constant values. */
+const MAX_CONSTANT_VALUE_LENGTH = 128;
+/**
+ * Extract top-level const declarations from the program root.
+ * Only captures constants at module scope — not inside functions.
+ */
+function extractConstants(rootNode) {
+    const constants = [];
+    function processDeclaration(node, isExported) {
+        // Only const declarations (not let/var)
+        if (!node.children.some((c) => c.type === "const"))
+            return;
+        for (const declarator of node.children) {
+            if (declarator.type !== "variable_declarator")
+                continue;
+            const nameNode = declarator.childForFieldName("name");
+            if (!nameNode || nameNode.type !== "identifier")
+                continue;
+            const valueNode = declarator.childForFieldName("value");
+            // Skip arrow functions — already handled as ParsedFunction
+            if (valueNode?.type === "arrow_function")
+                continue;
+            // Extract scalar value
+            // Unwrap `as const` / `satisfies Type` to reach the inner scalar
+            let value = null;
+            let inner = valueNode;
+            while (inner?.type === "as_expression" ||
+                inner?.type === "satisfies_expression") {
+                inner = inner.children[0] ?? null;
+            }
+            if (inner) {
+                if (inner.type === "string" || inner.type === "number") {
+                    const stripped = inner.type === "string"
+                        ? inner.text.replace(/^['"`]|['"`]$/g, "")
+                        : inner.text;
+                    if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
+                        value = stripped;
+                    }
+                }
+                else if (inner.type === "template_string" &&
+                    !inner.children.some((c) => c.type === "template_substitution")) {
+                    const stripped = inner.text.replace(/^`|`$/g, "");
+                    if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
+                        value = stripped;
+                    }
+                }
+            }
+            // Extract type annotation
+            let typeAnnotation = null;
+            const typeNode = declarator.childForFieldName("type");
+            if (typeNode) {
+                // type_annotation wraps `: Type` — strip the leading colon
+                typeAnnotation = typeNode.text.replace(/^:\s*/, "");
+            }
+            constants.push({
+                name: nameNode.text,
+                value,
+                typeAnnotation,
+                isExported,
+                lineStart: node.startPosition.row + 1,
+                lineEnd: node.endPosition.row + 1,
+            });
+        }
+    }
+    // Walk only top-level children (not recursive)
+    for (const child of rootNode.children) {
+        if (child.type === "lexical_declaration" ||
+            child.type === "variable_declaration") {
+            processDeclaration(child, false);
+        }
+        else if (child.type === "export_statement") {
+            for (const inner of child.children) {
+                if (inner.type === "lexical_declaration" ||
+                    inner.type === "variable_declaration") {
+                    processDeclaration(inner, true);
+                }
+            }
+        }
+    }
+    return constants;
+}
 export function parseFile(absolutePath, relativePath) {
     const source = fs.readFileSync(absolutePath, "utf-8");
-    const isTsx = relativePath.endsWith(".tsx");
-    const parser = isTsx ? tsxParser : tsParser;
+    const ext = relativePath.slice(relativePath.lastIndexOf("."));
+    const useJsx = JSX_EXTENSIONS.has(ext);
+    const parser = useJsx ? tsxParser : tsParser;
     const tree = parser.parse(source);
     if (!tree)
         throw new Error(`Failed to parse ${relativePath}`);
@@ -33,14 +119,26 @@ export function parseFile(absolutePath, relativePath) {
     const imports = [];
     const exports = [];
     extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
+    // Extract top-level constants (separate pass — only program scope)
+    const constants = extractConstants(tree.rootNode);
+    // Determine language from extension
+    const isJs = JS_EXTENSIONS.has(ext);
+    let language;
+    if (isJs) {
+        language = ext === ".jsx" ? "jsx" : "javascript";
+    }
+    else {
+        language = ext === ".tsx" ? "tsx" : "typescript";
+    }
     return {
         path: relativePath,
-        language: isTsx ? "tsx" : "typescript",
+        language,
         loc: lines.length,
         functions,
         classes,
         imports,
         exports,
+        ...(constants.length > 0 ? { constants } : {}),
     };
 }
 function extractFromNode(node, source, functions, classes, imports, exports, currentClassName) {
@@ -55,6 +153,7 @@ function extractFromNode(node, source, functions, classes, imports, exports, cur
         case "variable_declaration":
             extractVariableDeclaration(node, source, functions, exports);
             extractDynamicImports(node, imports);
+            extractRequireCalls(node, imports);
             break;
         case "export_statement":
             extractExportStatement(node, source, functions, classes, imports, exports);
@@ -66,6 +165,9 @@ function extractFromNode(node, source, functions, classes, imports, exports, cur
             if (currentClassName) {
                 extractMethod(node, source, functions, currentClassName);
             }
+            break;
+        case "enum_declaration":
+            extractEnum(node, exports);
             break;
     }
     // Recurse into children (except for nodes handled above)
@@ -108,9 +210,130 @@ function extractJSDoc(node) {
 export function computeBodyHash(node) {
     return computeBodyHashShared(node, ["{}"]);
 }
-const TS_PARAM_TYPES = ["required_parameter", "optional_parameter", "rest_parameter"];
+const TS_PARAM_TYPES = [
+    "required_parameter",
+    "optional_parameter",
+    "rest_parameter",
+];
 export function countParams(node) {
     return countParamsShared(node, TS_PARAM_TYPES);
+}
+/** Curated intrinsic HTML elements commonly wrapped by design system components. */
+const JSX_INTRINSIC_SET = new Set([
+    "button",
+    "input",
+    "select",
+    "textarea",
+    "a",
+    "img",
+    "table",
+    "form",
+    "dialog",
+]);
+/**
+ * Extract destructured parameter names from a function's parameter list.
+ * e.g. `({ variant, size, onClick }: ButtonProps)` → ["variant", "size", "onClick"]
+ */
+function extractDestructuredParams(node) {
+    const paramsNode = node.childForFieldName("parameters");
+    if (!paramsNode)
+        return undefined;
+    for (const param of paramsNode.children) {
+        if (param.type !== "required_parameter" &&
+            param.type !== "optional_parameter")
+            continue;
+        const pattern = param.childForFieldName("pattern");
+        if (pattern?.type !== "object_pattern")
+            continue;
+        const names = [];
+        for (const child of pattern.children) {
+            if (child.type === "shorthand_property_identifier_pattern") {
+                names.push(child.text);
+            }
+            else if (child.type === "pair_pattern") {
+                const key = child.childForFieldName("key");
+                if (key)
+                    names.push(key.text);
+            }
+            else if (child.type === "object_assignment_pattern") {
+                // Destructured param with default value: `{ variant = "primary" }`
+                const left = child.childForFieldName("left");
+                if (left)
+                    names.push(left.text);
+            }
+            else if (child.type === "rest_pattern") {
+                // Rest element: `{ ...rest }`
+                const ident = child.children.find((c) => c.type === "identifier");
+                if (ident)
+                    names.push(ident.text);
+            }
+        }
+        return names.length > 0 ? names : undefined;
+    }
+    return undefined;
+}
+/**
+ * Extract the type annotation name from the first parameter.
+ * e.g. `(props: ButtonProps)` → "ButtonProps", `({ x }: Opts)` → "Opts"
+ */
+function extractPropsType(node) {
+    const paramsNode = node.childForFieldName("parameters");
+    if (!paramsNode)
+        return undefined;
+    for (const param of paramsNode.children) {
+        if (param.type !== "required_parameter" &&
+            param.type !== "optional_parameter")
+            continue;
+        const typeNode = param.childForFieldName("type");
+        if (!typeNode)
+            return undefined;
+        // type_annotation wraps `: TypeName` — find the type identifier inside
+        for (const child of typeNode.children) {
+            if (child.type === "type_identifier" || child.type === "generic_type") {
+                return child.text;
+            }
+        }
+        return undefined;
+    }
+    return undefined;
+}
+/**
+ * Walk a function body and collect curated intrinsic JSX elements.
+ * Returns deduplicated array of lowercase tag names from JSX_INTRINSIC_SET, or undefined.
+ */
+function extractJsxIntrinsics(node) {
+    const bodyNode = node.childForFieldName("body");
+    if (!bodyNode)
+        return undefined;
+    const found = new Set();
+    function walk(n) {
+        if (n.type === "jsx_opening_element" ||
+            n.type === "jsx_self_closing_element") {
+            const tagNode = n.childForFieldName("name");
+            if (tagNode?.type === "identifier") {
+                const tag = tagNode.text;
+                if (JSX_INTRINSIC_SET.has(tag)) {
+                    found.add(tag);
+                }
+            }
+        }
+        for (const child of n.children) {
+            walk(child);
+        }
+    }
+    walk(bodyNode);
+    return found.size > 0 ? [...found] : undefined;
+}
+/** Build optional props metadata (destructuredParams, propsType, jsxIntrinsics) for a function node. */
+function buildPropsMetadata(node) {
+    const destructuredParams = extractDestructuredParams(node);
+    const propsType = extractPropsType(node);
+    const jsxIntrinsics = extractJsxIntrinsics(node);
+    return {
+        ...(destructuredParams ? { destructuredParams } : {}),
+        ...(propsType ? { propsType } : {}),
+        ...(jsxIntrinsics ? { jsxIntrinsics } : {}),
+    };
 }
 /** Compute shared metadata fields for a function or method node. */
 function buildFunctionMetadata(node, source) {
@@ -120,7 +343,9 @@ function buildFunctionMetadata(node, source) {
     const paramCount = countParams(node);
     const errorFlow = detectErrorFlow(node);
     const jsdoc = extractJSDoc(node);
-    const isAsync = source.slice(node.startIndex, node.endIndex).startsWith("async");
+    const isAsync = source
+        .slice(node.startIndex, node.endIndex)
+        .startsWith("async");
     return {
         signature,
         lineStart: node.startPosition.row + 1,
@@ -144,6 +369,7 @@ function extractFunction(node, source, functions, exports, className) {
     functions.push({
         name,
         ...buildFunctionMetadata(node, source),
+        ...buildPropsMetadata(node),
         isExported,
         className,
     });
@@ -159,6 +385,7 @@ function extractMethod(node, source, functions, className) {
     functions.push({
         name,
         ...buildFunctionMetadata(node, source),
+        ...buildPropsMetadata(node),
         isExported: false,
         className,
     });
@@ -183,7 +410,8 @@ function extractClass(node, source, classes, functions, exports) {
                 }
                 else if (clause.type === "implements_clause") {
                     for (const typeNode of clause.children) {
-                        if (typeNode.type === "type_identifier" || typeNode.type === "generic_type") {
+                        if (typeNode.type === "type_identifier" ||
+                            typeNode.type === "generic_type") {
                             implementsNames.push(typeNode.text);
                         }
                     }
@@ -222,6 +450,19 @@ function extractClass(node, source, classes, functions, exports) {
         exports.push({ name, kind: "class", isDefault: false });
     }
 }
+/**
+ * Extract enum declarations as type exports.
+ * Handles both `enum Foo { ... }` and `const enum Foo { ... }`.
+ */
+function extractEnum(node, exports) {
+    const nameNode = node.childForFieldName("name");
+    if (!nameNode)
+        return;
+    const isExported = node.parent?.type === "export_statement";
+    if (isExported) {
+        exports.push({ name: nameNode.text, kind: "type", isDefault: false });
+    }
+}
 function extractVariableDeclaration(node, source, functions, exports) {
     for (const declarator of node.children) {
         if (declarator.type !== "variable_declarator")
@@ -234,7 +475,9 @@ function extractVariableDeclaration(node, source, functions, exports) {
         if (valueNode.type === "arrow_function") {
             // Arrow functions assigned to const/let/var → treat as functions
             const name = nameNode.text;
-            const isAsync = source.slice(valueNode.startIndex, valueNode.endIndex).startsWith("async");
+            const isAsync = source
+                .slice(valueNode.startIndex, valueNode.endIndex)
+                .startsWith("async");
             const jsdoc = extractJSDoc(node);
             functions.push({
                 name,
@@ -248,6 +491,7 @@ function extractVariableDeclaration(node, source, functions, exports) {
                 jsdoc,
                 bodyHash: computeBodyHash(valueNode),
                 paramCount: countParams(valueNode),
+                ...buildPropsMetadata(valueNode),
             });
             if (isExported) {
                 exports.push({ name, kind: "function", isDefault: false });
@@ -266,6 +510,68 @@ function extractVariableDeclaration(node, source, functions, exports) {
                     : undefined,
             });
         }
+    }
+}
+/**
+ * Extract CommonJS require() calls as imports.
+ * Handles: `const x = require("./foo")` (namespace)
+ * and `const { a, b } = require("./foo")` (destructured).
+ * Only static string arguments are handled — dynamic require() is skipped.
+ */
+function extractRequireCalls(node, imports) {
+    for (const declarator of node.children) {
+        if (declarator.type !== "variable_declarator")
+            continue;
+        const nameNode = declarator.childForFieldName("name");
+        const valueNode = declarator.childForFieldName("value");
+        if (!nameNode || !valueNode)
+            continue;
+        // value must be a call_expression where function is `require`
+        if (valueNode.type !== "call_expression")
+            continue;
+        const funcNode = valueNode.childForFieldName("function");
+        if (!funcNode ||
+            funcNode.type !== "identifier" ||
+            funcNode.text !== "require")
+            continue;
+        // Extract the source path from arguments
+        const argsNode = valueNode.childForFieldName("arguments");
+        if (!argsNode)
+            continue;
+        const stringNode = argsNode.children.find((c) => c.type === "string");
+        if (!stringNode)
+            continue;
+        const source = stringNode.text.replace(/['"]/g, "");
+        // Extract symbols from the binding pattern
+        const symbols = [];
+        let isNamespace = false;
+        if (nameNode.type === "object_pattern") {
+            // const { a, b } = require("./foo")
+            for (const child of nameNode.children) {
+                if (child.type === "shorthand_property_identifier_pattern") {
+                    symbols.push(child.text);
+                }
+                else if (child.type === "pair_pattern") {
+                    const keyNode = child.childForFieldName("key");
+                    if (keyNode)
+                        symbols.push(keyNode.text);
+                }
+            }
+        }
+        else if (nameNode.type === "identifier") {
+            // const x = require("./foo")
+            isNamespace = true;
+            symbols.push(nameNode.text);
+        }
+        if (symbols.length === 0)
+            continue;
+        imports.push({
+            source,
+            symbols,
+            isDefault: false,
+            isNamespace,
+            line: node.startPosition.row + 1,
+        });
     }
 }
 function extractExportStatement(node, source, functions, classes, imports, exports) {
@@ -294,7 +600,11 @@ function extractExportStatement(node, source, functions, classes, imports, expor
             if (spec.type === "export_specifier") {
                 const nameNode = spec.childForFieldName("name") ?? spec.childForFieldName("alias");
                 if (nameNode) {
-                    exports.push({ name: nameNode.text, kind: "re-export", isDefault: false });
+                    exports.push({
+                        name: nameNode.text,
+                        kind: "re-export",
+                        isDefault: false,
+                    });
                     // Use the original name (not alias) for the import edge
                     const originalName = spec.childForFieldName("name");
                     reExportSymbols.push(originalName ? originalName.text : nameNode.text);
@@ -348,6 +658,9 @@ function extractExportStatement(node, source, functions, classes, imports, expor
                 }
                 break;
             }
+            case "enum_declaration":
+                extractEnum(child, exports);
+                break;
         }
     }
     // Handle: export default <expression>
@@ -393,7 +706,10 @@ function extractImport(node, imports) {
                             if (aliasNode && nameNode) {
                                 // Renamed: `import { Foo as Bar }` → symbol is "Bar" (local name)
                                 symbols.push(aliasNode.text);
-                                aliases.push({ local: aliasNode.text, original: nameNode.text });
+                                aliases.push({
+                                    local: aliasNode.text,
+                                    original: nameNode.text,
+                                });
                             }
                             else if (nameNode) {
                                 symbols.push(nameNode.text);
@@ -494,7 +810,9 @@ function buildSignature(node, source) {
     const nameNode = node.childForFieldName("name");
     const paramsNode = node.childForFieldName("parameters");
     const returnTypeNode = node.childForFieldName("return_type");
-    const isAsync = source.slice(node.startIndex, node.endIndex).startsWith("async");
+    const isAsync = source
+        .slice(node.startIndex, node.endIndex)
+        .startsWith("async");
     let sig = "";
     if (isAsync)
         sig += "async ";
@@ -507,7 +825,9 @@ function buildSignature(node, source) {
 function buildArrowSignature(nameNode, arrowNode, source) {
     const paramsNode = arrowNode.childForFieldName("parameters");
     const returnTypeNode = arrowNode.childForFieldName("return_type");
-    const isAsync = source.slice(arrowNode.startIndex, arrowNode.endIndex).startsWith("async");
+    const isAsync = source
+        .slice(arrowNode.startIndex, arrowNode.endIndex)
+        .startsWith("async");
     let sig = "";
     if (isAsync)
         sig += "async ";

@@ -15,7 +15,15 @@ const HARDCODED_IGNORES = [
     ".mypy_cache",
     ".pytest_cache",
 ];
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".py"]);
+const SOURCE_EXTENSIONS = new Set([
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".py",
+]);
 const TEST_PATH_RE = /(?:\.(test|spec)\.(ts|tsx|js|jsx)$|(?:^|\/)(__tests__|__mocks__|fixtures)\/|^tests?\/|\/tests?\/|\.stories\.(ts|tsx)$)/;
 /** Classify a file path as test/non-test for reachability analysis. */
 export function isTestFile(filePath) {
@@ -47,7 +55,8 @@ function walkDir(dir, repoRoot, ig, results) {
         if (entry.isDirectory()) {
             walkDir(absolutePath, repoRoot, ig, results);
         }
-        else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+        else if (entry.isFile() &&
+            SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
             results.push({ absolutePath, relativePath });
         }
     }
