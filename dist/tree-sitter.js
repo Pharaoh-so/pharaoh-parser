@@ -30,7 +30,7 @@ const MAX_CONSTANT_VALUE_LENGTH = 128;
  * Extract top-level const declarations from the program root.
  * Only captures constants at module scope — not inside functions.
  */
-function extractConstants(rootNode, exports) {
+function extractConstants(rootNode) {
     const constants = [];
     function processDeclaration(node, isExported) {
         // Only const declarations (not let/var)
@@ -47,23 +47,27 @@ function extractConstants(rootNode, exports) {
             if (valueNode?.type === "arrow_function")
                 continue;
             // Extract scalar value
+            // Unwrap `as const` / `satisfies Type` to reach the inner scalar
             let value = null;
-            if (valueNode) {
-                if (valueNode.type === "string" || valueNode.type === "number") {
-                    const raw = valueNode.text;
-                    if (raw.length <= MAX_CONSTANT_VALUE_LENGTH) {
-                        // Strip quotes from strings
-                        value =
-                            valueNode.type === "string"
-                                ? raw.replace(/^['"`]|['"`]$/g, "")
-                                : raw;
+            let inner = valueNode;
+            while (inner?.type === "as_expression" ||
+                inner?.type === "satisfies_expression") {
+                inner = inner.children[0] ?? null;
+            }
+            if (inner) {
+                if (inner.type === "string" || inner.type === "number") {
+                    const stripped = inner.type === "string"
+                        ? inner.text.replace(/^['"`]|['"`]$/g, "")
+                        : inner.text;
+                    if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
+                        value = stripped;
                     }
                 }
-                else if (valueNode.type === "template_string" &&
-                    !valueNode.children.some((c) => c.type === "template_substitution")) {
-                    const raw = valueNode.text.replace(/^`|`$/g, "");
-                    if (raw.length <= MAX_CONSTANT_VALUE_LENGTH) {
-                        value = raw;
+                else if (inner.type === "template_string" &&
+                    !inner.children.some((c) => c.type === "template_substitution")) {
+                    const stripped = inner.text.replace(/^`|`$/g, "");
+                    if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
+                        value = stripped;
                     }
                 }
             }
@@ -116,7 +120,7 @@ export function parseFile(absolutePath, relativePath) {
     const exports = [];
     extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
     // Extract top-level constants (separate pass — only program scope)
-    const constants = extractConstants(tree.rootNode, exports);
+    const constants = extractConstants(tree.rootNode);
     // Determine language from extension
     const isJs = JS_EXTENSIONS.has(ext);
     let language;
@@ -250,6 +254,18 @@ function extractDestructuredParams(node) {
                 const key = child.childForFieldName("key");
                 if (key)
                     names.push(key.text);
+            }
+            else if (child.type === "object_assignment_pattern") {
+                // Destructured param with default value: `{ variant = "primary" }`
+                const left = child.childForFieldName("left");
+                if (left)
+                    names.push(left.text);
+            }
+            else if (child.type === "rest_pattern") {
+                // Rest element: `{ ...rest }`
+                const ident = child.children.find((c) => c.type === "identifier");
+                if (ident)
+                    names.push(ident.text);
             }
         }
         return names.length > 0 ? names : undefined;

@@ -41,3 +41,16 @@ export const instance = new Map();
 
 // Call expression (value: null)
 export const timestamp = Date.now();
+
+// as const on scalar (should unwrap and extract value)
+export const API_VERSION = "v2" as const;
+
+// as const on array (value: null — not scalar)
+export const SIZES = ["sm", "md", "lg"] as const;
+
+// let should NOT appear in constants
+// biome-ignore lint/style/useConst: intentional test fixture — testing let exclusion
+// biome-ignore lint/style/useSingleVarDeclarator: intentional test fixture
+let mutableVal = "x",
+	anotherVal = "y";
+export { mutableVal, anotherVal };

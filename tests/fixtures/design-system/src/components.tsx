@@ -76,6 +76,48 @@ export function compute(x: number): number {
 	return x * 2;
 }
 
+// Default-valued destructured props
+export function Badge({
+	variant = "default",
+	size = "md",
+	...rest
+}: BadgeProps): JSX.Element {
+	return (
+		<span {...rest}>
+			{variant}-{size}
+		</span>
+	);
+}
+
+// Renamed destructured props
+export function IconButton({
+	onClick: handleClick,
+	icon: iconName,
+}: IconButtonProps): JSX.Element {
+	return (
+		// biome-ignore lint/a11y/useButtonType: test fixture
+		<button onClick={handleClick}>{iconName}</button>
+	);
+}
+
+// Inline object type (no named type)
+export function Inline({ x, y }: { x: number; y: number }): JSX.Element {
+	return (
+		<div>
+			{x},{y}
+		</div>
+	);
+}
+
+interface BadgeProps {
+	variant?: string;
+	size?: string;
+	[key: string]: unknown;
+}
+interface IconButtonProps {
+	onClick: () => void;
+	icon: string;
+}
 interface ButtonProps {
 	variant: string;
 	size: string;

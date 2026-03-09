@@ -84,6 +84,44 @@ describe("destructured params extraction", () => {
 		expect(render!.destructuredParams).toEqual(["open", "onClose"]);
 		expect(render!.propsType).toBe("DialogProps");
 	});
+
+	it("extracts default-valued destructured params", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/components.tsx"),
+			"src/components.tsx",
+		);
+
+		const badge = result.functions.find((f) => f.name === "Badge");
+		expect(badge).toBeDefined();
+		expect(badge!.destructuredParams).toEqual(["variant", "size", "rest"]);
+		expect(badge!.propsType).toBe("BadgeProps");
+	});
+
+	it("extracts renamed destructured props (pair_pattern)", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/components.tsx"),
+			"src/components.tsx",
+		);
+
+		const iconBtn = result.functions.find((f) => f.name === "IconButton");
+		expect(iconBtn).toBeDefined();
+		// Keys (prop names), not local aliases
+		expect(iconBtn!.destructuredParams).toEqual(["onClick", "icon"]);
+		expect(iconBtn!.propsType).toBe("IconButtonProps");
+	});
+
+	it("returns undefined propsType for inline object types", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/components.tsx"),
+			"src/components.tsx",
+		);
+
+		const inline = result.functions.find((f) => f.name === "Inline");
+		expect(inline).toBeDefined();
+		expect(inline!.destructuredParams).toEqual(["x", "y"]);
+		// Inline object types don't produce a named propsType
+		expect(inline!.propsType).toBeUndefined();
+	});
 });
 
 // ── JSX intrinsics ──
@@ -335,6 +373,41 @@ describe("constant extraction", () => {
 		expect(timestamp).toBeDefined();
 		expect(timestamp!.value).toBeNull();
 		expect(timestamp!.isExported).toBe(true);
+	});
+
+	it("unwraps 'as const' on scalar values", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/constants.ts"),
+			"src/constants.ts",
+		);
+
+		const version = result.constants?.find((c) => c.name === "API_VERSION");
+		expect(version).toBeDefined();
+		expect(version!.value).toBe("v2");
+		expect(version!.isExported).toBe(true);
+	});
+
+	it("sets value: null for 'as const' on non-scalar values", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/constants.ts"),
+			"src/constants.ts",
+		);
+
+		const sizes = result.constants?.find((c) => c.name === "SIZES");
+		expect(sizes).toBeDefined();
+		expect(sizes!.value).toBeNull();
+	});
+
+	it("excludes let/var declarations from constants", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/constants.ts"),
+			"src/constants.ts",
+		);
+
+		const mutable = result.constants?.find((c) => c.name === "mutableVal");
+		expect(mutable).toBeUndefined();
+		const another = result.constants?.find((c) => c.name === "anotherVal");
+		expect(another).toBeUndefined();
 	});
 
 	it("omits constants field for files with no constants", () => {
