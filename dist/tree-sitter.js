@@ -309,11 +309,10 @@ function extractJsxIntrinsics(node) {
     function walk(n) {
         if (n.type === "jsx_opening_element" ||
             n.type === "jsx_self_closing_element") {
-            // First named child is the tag name (identifier for intrinsics)
-            const tagNode = n.children.find((c) => c.type === "identifier" || c.type === "jsx_identifier");
-            if (tagNode) {
+            const tagNode = n.childForFieldName("name");
+            if (tagNode?.type === "identifier") {
                 const tag = tagNode.text;
-                if (tag === tag.toLowerCase() && JSX_INTRINSIC_SET.has(tag)) {
+                if (JSX_INTRINSIC_SET.has(tag)) {
                     found.add(tag);
                 }
             }

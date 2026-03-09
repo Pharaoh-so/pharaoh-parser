@@ -416,7 +416,7 @@ describe("constant extraction", () => {
 			"src/components.tsx",
 		);
 
-		// components.tsx has no top-level const declarations (only functions/classes)
+		// components.tsx has arrow function consts (treated as functions, not constants)
 		expect(result.constants).toBeUndefined();
 	});
 });
