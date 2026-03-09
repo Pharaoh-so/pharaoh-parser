@@ -268,16 +268,14 @@ describe("constant extraction", () => {
 		expect(colors!.isExported).toBe(true);
 	});
 
-	it("marks non-exported constants correctly", () => {
+	it("skips constants with secret-like names (INTERNAL_KEY)", () => {
 		const result = parseFile(
 			path.join(FIXTURES_DIR, "src/constants.ts"),
 			"src/constants.ts",
 		);
 
 		const internal = result.constants?.find((c) => c.name === "INTERNAL_KEY");
-		expect(internal).toBeDefined();
-		expect(internal!.value).toBe("secret-key-123");
-		expect(internal!.isExported).toBe(false);
+		expect(internal).toBeUndefined();
 	});
 
 	it("extracts type annotation when present", () => {
@@ -408,6 +406,43 @@ describe("constant extraction", () => {
 		expect(mutable).toBeUndefined();
 		const another = result.constants?.find((c) => c.name === "anotherVal");
 		expect(another).toBeUndefined();
+	});
+
+	it("skips exported constants with secret-like names", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/constants.ts"),
+			"src/constants.ts",
+		);
+
+		// All of these should be skipped — names contain secret-like patterns
+		expect(result.constants?.find((c) => c.name === "DATABASE_PASSWORD")).toBeUndefined();
+		expect(result.constants?.find((c) => c.name === "STRIPE_SECRET_KEY")).toBeUndefined();
+		expect(result.constants?.find((c) => c.name === "AWS_ACCESS_KEY")).toBeUndefined();
+		expect(result.constants?.find((c) => c.name === "AUTH_TOKEN")).toBeUndefined();
+		expect(result.constants?.find((c) => c.name === "API_KEY")).toBeUndefined();
+		expect(result.constants?.find((c) => c.name === "JWT_CREDENTIAL")).toBeUndefined();
+	});
+
+	it("keeps constants whose names contain partial secret-like substrings in non-secret context", () => {
+		const result = parseFile(
+			path.join(FIXTURES_DIR, "src/constants.ts"),
+			"src/constants.ts",
+		);
+
+		// KEYBOARD_SHORTCUT contains "KEY" but is not a secret — word boundary matters
+		const keyboard = result.constants?.find((c) => c.name === "KEYBOARD_SHORTCUT");
+		expect(keyboard).toBeDefined();
+		expect(keyboard!.value).toBe("Ctrl+K");
+
+		// TOKEN_LIMIT contains "TOKEN" but is a numeric limit, not a secret
+		const tokenLimit = result.constants?.find((c) => c.name === "TOKEN_LIMIT");
+		expect(tokenLimit).toBeDefined();
+		expect(tokenLimit!.value).toBe("4096");
+
+		// SECRET_SAUCE_RECIPE contains "SECRET" but is not a credential
+		const sauce = result.constants?.find((c) => c.name === "SECRET_SAUCE_RECIPE");
+		expect(sauce).toBeDefined();
+		expect(sauce!.value).toBe("tomato");
 	});
 
 	it("omits constants field for files with no constants", () => {

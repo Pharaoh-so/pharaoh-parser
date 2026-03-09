@@ -52,8 +52,16 @@ const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 const MAX_CONSTANT_VALUE_LENGTH = 128;
 
 /**
+ * Secret-like name suffix pattern — constants whose names end with these
+ * segments (after `_` or as the full name) are skipped to prevent accidental
+ * credential storage in the knowledge graph. Defense-in-depth measure.
+ */
+const SECRET_NAME_SUFFIX = /(?:^|_)(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)$/i;
+
+/**
  * Extract top-level const declarations from the program root.
  * Only captures constants at module scope — not inside functions.
+ * Skips constants whose names match secret-like patterns (defense-in-depth).
  */
 function extractConstants(rootNode: SyntaxNode): ParsedConstant[] {
 	const constants: ParsedConstant[] = [];
@@ -67,6 +75,9 @@ function extractConstants(rootNode: SyntaxNode): ParsedConstant[] {
 
 			const nameNode = declarator.childForFieldName("name");
 			if (!nameNode || nameNode.type !== "identifier") continue;
+
+			// Skip constants with secret-like names (defense-in-depth)
+			if (SECRET_NAME_SUFFIX.test(nameNode.text)) continue;
 
 			const valueNode = declarator.childForFieldName("value");
 
