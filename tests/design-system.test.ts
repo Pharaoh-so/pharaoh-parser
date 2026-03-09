@@ -415,12 +415,22 @@ describe("constant extraction", () => {
 		);
 
 		// All of these should be skipped — names contain secret-like patterns
-		expect(result.constants?.find((c) => c.name === "DATABASE_PASSWORD")).toBeUndefined();
-		expect(result.constants?.find((c) => c.name === "STRIPE_SECRET_KEY")).toBeUndefined();
-		expect(result.constants?.find((c) => c.name === "AWS_ACCESS_KEY")).toBeUndefined();
-		expect(result.constants?.find((c) => c.name === "AUTH_TOKEN")).toBeUndefined();
+		expect(
+			result.constants?.find((c) => c.name === "DATABASE_PASSWORD"),
+		).toBeUndefined();
+		expect(
+			result.constants?.find((c) => c.name === "STRIPE_SECRET_KEY"),
+		).toBeUndefined();
+		expect(
+			result.constants?.find((c) => c.name === "AWS_ACCESS_KEY"),
+		).toBeUndefined();
+		expect(
+			result.constants?.find((c) => c.name === "AUTH_TOKEN"),
+		).toBeUndefined();
 		expect(result.constants?.find((c) => c.name === "API_KEY")).toBeUndefined();
-		expect(result.constants?.find((c) => c.name === "JWT_CREDENTIAL")).toBeUndefined();
+		expect(
+			result.constants?.find((c) => c.name === "JWT_CREDENTIAL"),
+		).toBeUndefined();
 	});
 
 	it("keeps constants whose names contain partial secret-like substrings in non-secret context", () => {
@@ -430,7 +440,9 @@ describe("constant extraction", () => {
 		);
 
 		// KEYBOARD_SHORTCUT contains "KEY" but is not a secret — word boundary matters
-		const keyboard = result.constants?.find((c) => c.name === "KEYBOARD_SHORTCUT");
+		const keyboard = result.constants?.find(
+			(c) => c.name === "KEYBOARD_SHORTCUT",
+		);
 		expect(keyboard).toBeDefined();
 		expect(keyboard!.value).toBe("Ctrl+K");
 
@@ -440,7 +452,9 @@ describe("constant extraction", () => {
 		expect(tokenLimit!.value).toBe("4096");
 
 		// SECRET_SAUCE_RECIPE contains "SECRET" but is not a credential
-		const sauce = result.constants?.find((c) => c.name === "SECRET_SAUCE_RECIPE");
+		const sauce = result.constants?.find(
+			(c) => c.name === "SECRET_SAUCE_RECIPE",
+		);
 		expect(sauce).toBeDefined();
 		expect(sauce!.value).toBe("tomato");
 	});
