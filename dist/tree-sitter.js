@@ -387,7 +387,7 @@ function extractFunction(node, source, functions, exports, className) {
         exports.push({ name, kind: "function", isDefault: false });
     }
 }
-function extractMethod(node, source, functions, className) {
+function extractMethod(node, source, functions, className, decorators) {
     const nameNode = node.childForFieldName("name");
     if (!nameNode)
         return;
@@ -398,20 +398,30 @@ function extractMethod(node, source, functions, className) {
         ...buildPropsMetadata(node),
         isExported: false,
         className,
+        ...(decorators ? { decorators } : {}),
     });
 }
-function extractClass(node, source, classes, functions, exports) {
+function extractClass(node, source, classes, functions, exports, parentDecorators) {
     const nameNode = node.childForFieldName("name");
     if (!nameNode)
         return;
     const name = nameNode.text;
     const isExported = node.parent?.type === "export_statement";
     const methods = [];
-    // Extract class heritage (extends / implements)
+    // Extract class heritage (extends / implements) and class-level decorators
     let extendsName;
     const implementsNames = [];
+    const classDecorators = parentDecorators
+        ? [...parentDecorators]
+        : [];
     for (const child of node.children) {
-        if (child.type === "class_heritage") {
+        if (child.type === "decorator") {
+            let text = child.text.trim();
+            if (text.length > 500)
+                text = `${text.slice(0, 497)}...`;
+            classDecorators.push(text);
+        }
+        else if (child.type === "class_heritage") {
             for (const clause of child.children) {
                 if (clause.type === "extends_clause") {
                     const valueNode = clause.child(1);
@@ -429,16 +439,24 @@ function extractClass(node, source, classes, functions, exports) {
             }
         }
     }
-    // Find class body and extract methods
+    // Find class body and extract methods (with decorator accumulation)
     const bodyNode = node.childForFieldName("body");
     if (bodyNode) {
+        let pendingDecorators = [];
         for (const child of bodyNode.children) {
-            if (child.type === "method_definition") {
+            if (child.type === "decorator") {
+                let text = child.text.trim();
+                if (text.length > 500)
+                    text = `${text.slice(0, 497)}...`;
+                pendingDecorators.push(text);
+            }
+            else if (child.type === "method_definition") {
                 const methodName = child.childForFieldName("name");
                 if (methodName) {
                     methods.push(methodName.text);
-                    extractMethod(child, source, functions, name);
+                    extractMethod(child, source, functions, name, pendingDecorators.length > 0 ? pendingDecorators : undefined);
                 }
+                pendingDecorators = [];
             }
         }
     }
@@ -455,6 +473,7 @@ function extractClass(node, source, classes, functions, exports) {
         methods,
         extends: extendsName,
         implements: implementsNames.length > 0 ? implementsNames : undefined,
+        decorators: classDecorators.length > 0 ? classDecorators : undefined,
     });
     if (isExported) {
         exports.push({ name, kind: "class", isDefault: false });
@@ -633,6 +652,16 @@ function extractExportStatement(node, source, functions, classes, imports, expor
         }
         return;
     }
+    // Collect decorators from the export_statement (for exported decorated classes)
+    const exportDecorators = [];
+    for (const child of node.children) {
+        if (child.type === "decorator") {
+            let text = child.text.trim();
+            if (text.length > 500)
+                text = `${text.slice(0, 497)}...`;
+            exportDecorators.push(text);
+        }
+    }
     // Handle exported declarations — recurse into the declaration
     for (const child of node.children) {
         switch (child.type) {
@@ -640,7 +669,7 @@ function extractExportStatement(node, source, functions, classes, imports, expor
                 extractFunction(child, source, functions, exports);
                 break;
             case "class_declaration":
-                extractClass(child, source, classes, functions, exports);
+                extractClass(child, source, classes, functions, exports, exportDecorators.length > 0 ? exportDecorators : undefined);
                 break;
             case "lexical_declaration":
             case "variable_declaration":
