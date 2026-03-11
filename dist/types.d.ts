@@ -13,7 +13,7 @@ export interface ParsedFunction {
     paramCount: number;
     throws?: boolean;
     hasTryCatch?: boolean;
-    /** Decorator strings for Python functions (e.g. ["@staticmethod", "@app.route(\"/api\")"]) */
+    /** Decorator strings (e.g. ["@staticmethod", "@app.route(\"/api\")"] for Python, ["@Get()", "@Cached({ttl: 60})"] for TypeScript). */
     decorators?: string[];
     /** Destructured parameter names (e.g. ["variant", "size", "onClick"] from `{ variant, size, onClick }: ButtonProps`). */
     destructuredParams?: string[];
@@ -32,6 +32,7 @@ export interface ParsedClass {
     methods: string[];
     extends?: string;
     implements?: string[];
+    decorators?: string[];
 }
 export interface ParsedImport {
     source: string;

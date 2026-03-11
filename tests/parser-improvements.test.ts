@@ -92,6 +92,81 @@ describe("python decorator extraction", () => {
 	});
 });
 
+// ── TypeScript decorator extraction ──
+
+describe("typescript decorator extraction", () => {
+	const DECORATOR_DIR = path.join(FIXTURES_DIR, "ts-decorators");
+	const result = parseFile(
+		path.join(DECORATOR_DIR, "src/decorated.ts"),
+		"src/decorated.ts",
+	);
+
+	it("extracts class decorator", () => {
+		const cls = result.classes.find((c) => c.name === "UserController");
+		expect(cls).toBeDefined();
+		expect(cls!.decorators).toEqual(['@Controller("/users")']);
+	});
+
+	it("extracts simple identifier decorator on class (no parens)", () => {
+		const cls = result.classes.find((c) => c.name === "UserService");
+		expect(cls).toBeDefined();
+		expect(cls!.decorators).toEqual(["@Injectable"]);
+	});
+
+	it("omits decorators for undecorated class", () => {
+		const cls = result.classes.find((c) => c.name === "PlainHelper");
+		expect(cls).toBeDefined();
+		expect(cls!.decorators).toBeUndefined();
+	});
+
+	it("extracts stacked method decorators in source order", () => {
+		const fn = result.functions.find(
+			(f) => f.name === "getUsers" && f.className === "UserController",
+		);
+		expect(fn).toBeDefined();
+		expect(fn!.decorators).toEqual(["@Get()", "@Cached({ ttl: 60 })"]);
+	});
+
+	it("extracts single method decorator", () => {
+		const fn = result.functions.find(
+			(f) => f.name === "createUser" && f.className === "UserController",
+		);
+		expect(fn).toBeDefined();
+		expect(fn!.decorators).toEqual(["@Post()"]);
+	});
+
+	it("extracts member-expression decorator", () => {
+		const fn = result.functions.find(
+			(f) => f.name === "process" && f.className === "UserService",
+		);
+		expect(fn).toBeDefined();
+		expect(fn!.decorators).toEqual(['@app.route("/process")']);
+	});
+
+	it("omits decorators for undecorated method", () => {
+		const fn = result.functions.find(
+			(f) => f.name === "healthCheck" && f.className === "UserController",
+		);
+		expect(fn).toBeDefined();
+		expect(fn!.decorators).toBeUndefined();
+	});
+
+	it("extracts decorators on exported decorated class", () => {
+		const cls = result.classes.find((c) => c.name === "AdminController");
+		expect(cls).toBeDefined();
+		expect(cls!.isExported).toBe(true);
+		expect(cls!.decorators).toEqual(['@Controller("/admin")']);
+	});
+
+	it("extracts method decorators inside exported decorated class", () => {
+		const fn = result.functions.find(
+			(f) => f.name === "listAdmins" && f.className === "AdminController",
+		);
+		expect(fn).toBeDefined();
+		expect(fn!.decorators).toEqual(["@Get()"]);
+	});
+});
+
 // ── TypeScript enum extraction ──
 
 describe("typescript enum extraction", () => {
