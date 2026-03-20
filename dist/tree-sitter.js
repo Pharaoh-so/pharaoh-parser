@@ -123,33 +123,41 @@ export function parseFile(absolutePath, relativePath) {
     const tree = parser.parse(source);
     if (!tree)
         throw new Error(`Failed to parse ${relativePath}`);
-    const lines = source.split("\n");
-    const functions = [];
-    const classes = [];
-    const imports = [];
-    const exports = [];
-    extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
-    // Extract top-level constants (separate pass — only program scope)
-    const constants = extractConstants(tree.rootNode);
-    // Determine language from extension
-    const isJs = JS_EXTENSIONS.has(ext);
-    let language;
-    if (isJs) {
-        language = ext === ".jsx" ? "jsx" : "javascript";
+    // tree.delete() MUST be called to free WASM memory. Without it, each parsed
+    // file leaks its full AST in the WASM heap — after ~800 files the heap
+    // exhausts and Emscripten calls abort(), killing the worker process.
+    try {
+        const lines = source.split("\n");
+        const functions = [];
+        const classes = [];
+        const imports = [];
+        const exports = [];
+        extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
+        // Extract top-level constants (separate pass — only program scope)
+        const constants = extractConstants(tree.rootNode);
+        // Determine language from extension
+        const isJs = JS_EXTENSIONS.has(ext);
+        let language;
+        if (isJs) {
+            language = ext === ".jsx" ? "jsx" : "javascript";
+        }
+        else {
+            language = ext === ".tsx" ? "tsx" : "typescript";
+        }
+        return {
+            path: relativePath,
+            language,
+            loc: lines.length,
+            functions,
+            classes,
+            imports,
+            exports,
+            ...(constants.length > 0 ? { constants } : {}),
+        };
     }
-    else {
-        language = ext === ".tsx" ? "tsx" : "typescript";
+    finally {
+        tree.delete();
     }
-    return {
-        path: relativePath,
-        language,
-        loc: lines.length,
-        functions,
-        classes,
-        imports,
-        exports,
-        ...(constants.length > 0 ? { constants } : {}),
-    };
 }
 function extractFromNode(node, source, functions, classes, imports, exports, currentClassName) {
     switch (node.type) {

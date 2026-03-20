@@ -23,23 +23,31 @@ export function parseFile(absolutePath, relativePath) {
     const tree = pyParser.parse(source);
     if (!tree)
         throw new Error(`Failed to parse ${relativePath}`);
-    const lines = source.split("\n");
-    const functions = [];
-    const classes = [];
-    const imports = [];
-    const exports = [];
-    // Extract __all__ for export detection
-    const allNames = extractDunderAll(tree.rootNode);
-    extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
-    return {
-        path: relativePath,
-        language: "python",
-        loc: lines.length,
-        functions,
-        classes,
-        imports,
-        exports,
-    };
+    // tree.delete() MUST be called to free WASM memory. Without it, each parsed
+    // file leaks its full AST in the WASM heap — after ~800 files the heap
+    // exhausts and Emscripten calls abort(), killing the worker process.
+    try {
+        const lines = source.split("\n");
+        const functions = [];
+        const classes = [];
+        const imports = [];
+        const exports = [];
+        // Extract __all__ for export detection
+        const allNames = extractDunderAll(tree.rootNode);
+        extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
+        return {
+            path: relativePath,
+            language: "python",
+            loc: lines.length,
+            functions,
+            classes,
+            imports,
+            exports,
+        };
+    }
+    finally {
+        tree.delete();
+    }
 }
 /**
  * Extract names from `__all__ = ["name1", "name2"]` at module level.

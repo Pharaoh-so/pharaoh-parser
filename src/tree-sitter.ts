@@ -165,37 +165,45 @@ export function parseFile(
 	const parser = useJsx ? tsxParser : tsParser;
 	const tree = parser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
-	const lines = source.split("\n");
 
-	const functions: ParsedFunction[] = [];
-	const classes: ParsedClass[] = [];
-	const imports: ParsedImport[] = [];
-	const exports: ParsedExport[] = [];
+	// tree.delete() MUST be called to free WASM memory. Without it, each parsed
+	// file leaks its full AST in the WASM heap — after ~800 files the heap
+	// exhausts and Emscripten calls abort(), killing the worker process.
+	try {
+		const lines = source.split("\n");
 
-	extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
+		const functions: ParsedFunction[] = [];
+		const classes: ParsedClass[] = [];
+		const imports: ParsedImport[] = [];
+		const exports: ParsedExport[] = [];
 
-	// Extract top-level constants (separate pass — only program scope)
-	const constants = extractConstants(tree.rootNode);
+		extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
 
-	// Determine language from extension
-	const isJs = JS_EXTENSIONS.has(ext);
-	let language: ParsedFile["language"];
-	if (isJs) {
-		language = ext === ".jsx" ? "jsx" : "javascript";
-	} else {
-		language = ext === ".tsx" ? "tsx" : "typescript";
+		// Extract top-level constants (separate pass — only program scope)
+		const constants = extractConstants(tree.rootNode);
+
+		// Determine language from extension
+		const isJs = JS_EXTENSIONS.has(ext);
+		let language: ParsedFile["language"];
+		if (isJs) {
+			language = ext === ".jsx" ? "jsx" : "javascript";
+		} else {
+			language = ext === ".tsx" ? "tsx" : "typescript";
+		}
+
+		return {
+			path: relativePath,
+			language,
+			loc: lines.length,
+			functions,
+			classes,
+			imports,
+			exports,
+			...(constants.length > 0 ? { constants } : {}),
+		};
+	} finally {
+		tree.delete();
 	}
-
-	return {
-		path: relativePath,
-		language,
-		loc: lines.length,
-		functions,
-		classes,
-		imports,
-		exports,
-		...(constants.length > 0 ? { constants } : {}),
-	};
 }
 
 function extractFromNode(

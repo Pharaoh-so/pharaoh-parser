@@ -40,35 +40,43 @@ export function parseFile(
 	const source = fs.readFileSync(absolutePath, "utf-8");
 	const tree = pyParser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
-	const lines = source.split("\n");
 
-	const functions: ParsedFunction[] = [];
-	const classes: ParsedClass[] = [];
-	const imports: ParsedImport[] = [];
-	const exports: ParsedExport[] = [];
+	// tree.delete() MUST be called to free WASM memory. Without it, each parsed
+	// file leaks its full AST in the WASM heap — after ~800 files the heap
+	// exhausts and Emscripten calls abort(), killing the worker process.
+	try {
+		const lines = source.split("\n");
 
-	// Extract __all__ for export detection
-	const allNames = extractDunderAll(tree.rootNode);
+		const functions: ParsedFunction[] = [];
+		const classes: ParsedClass[] = [];
+		const imports: ParsedImport[] = [];
+		const exports: ParsedExport[] = [];
 
-	extractFromNode(
-		tree.rootNode,
-		source,
-		functions,
-		classes,
-		imports,
-		exports,
-		allNames,
-	);
+		// Extract __all__ for export detection
+		const allNames = extractDunderAll(tree.rootNode);
 
-	return {
-		path: relativePath,
-		language: "python",
-		loc: lines.length,
-		functions,
-		classes,
-		imports,
-		exports,
-	};
+		extractFromNode(
+			tree.rootNode,
+			source,
+			functions,
+			classes,
+			imports,
+			exports,
+			allNames,
+		);
+
+		return {
+			path: relativePath,
+			language: "python",
+			loc: lines.length,
+			functions,
+			classes,
+			imports,
+			exports,
+		};
+	} finally {
+		tree.delete();
+	}
 }
 
 /**
