@@ -177,7 +177,14 @@ export function parseFile(
 		const imports: ParsedImport[] = [];
 		const exports: ParsedExport[] = [];
 
-		extractFromNode(tree.rootNode, source, functions, classes, imports, exports);
+		extractFromNode(
+			tree.rootNode,
+			source,
+			functions,
+			classes,
+			imports,
+			exports,
+		);
 
 		// Extract top-level constants (separate pass — only program scope)
 		const constants = extractConstants(tree.rootNode);
