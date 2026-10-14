@@ -409,6 +409,59 @@ function extractMethod(node, source, functions, className, decorators) {
         ...(decorators ? { decorators } : {}),
     });
 }
+/** Value types that make a class field a method: `handle = async (req) => {...}`. */
+const FUNCTION_VALUE_TYPES = new Set([
+    "arrow_function",
+    "function_expression",
+    "function",
+]);
+/**
+ * Extract a class field whose value is a function as a method of the class.
+ * Express and DI-style classes bind handlers this way
+ * (`createUser = async (req, res) => { ... }`). Decorators may be children of
+ * the field (TypeScript) or preceding siblings (passed in). Returns the field
+ * name when it held a function, otherwise undefined (data fields are skipped).
+ */
+function extractFieldFunction(field, source, functions, className, siblingDecorators) {
+    const nameNode = field.childForFieldName("name") ?? field.childForFieldName("property");
+    const valueNode = field.childForFieldName("value");
+    if (!nameNode || !valueNode || !FUNCTION_VALUE_TYPES.has(valueNode.type)) {
+        return undefined;
+    }
+    const decorators = [...siblingDecorators];
+    for (const child of field.children) {
+        if (child.type !== "decorator")
+            continue;
+        let text = child.text.trim();
+        if (text.length > 500)
+            text = `${text.slice(0, 497)}...`;
+        decorators.push(text);
+    }
+    const name = nameNode.text;
+    const isAsync = source
+        .slice(valueNode.startIndex, valueNode.endIndex)
+        .startsWith("async");
+    const paramsNode = valueNode.childForFieldName("parameters");
+    const returnTypeNode = valueNode.childForFieldName("return_type");
+    const signature = `${isAsync ? "async " : ""}${name} = ${paramsNode?.text ?? "()"}${returnTypeNode ? `: ${returnTypeNode.text.replace(/^:\s*/, "")}` : ""} => ...`;
+    functions.push({
+        name,
+        signature,
+        lineStart: field.startPosition.row + 1,
+        lineEnd: valueNode.endPosition.row + 1,
+        loc: valueNode.endPosition.row - field.startPosition.row + 1,
+        complexity: computeComplexity(valueNode),
+        isExported: false,
+        isAsync,
+        jsdoc: extractJSDoc(field),
+        bodyHash: computeBodyHash(valueNode),
+        paramCount: countParams(valueNode),
+        ...buildPropsMetadata(valueNode),
+        className,
+        ...(decorators.length > 0 ? { decorators } : {}),
+    });
+    return name;
+}
 function extractClass(node, source, classes, functions, exports, parentDecorators) {
     const nameNode = node.childForFieldName("name");
     if (!nameNode)
@@ -464,6 +517,13 @@ function extractClass(node, source, classes, functions, exports, parentDecorator
                     methods.push(methodName.text);
                     extractMethod(child, source, functions, name, pendingDecorators.length > 0 ? pendingDecorators : undefined);
                 }
+                pendingDecorators = [];
+            }
+            else if (child.type === "public_field_definition" ||
+                child.type === "field_definition") {
+                const fieldName = extractFieldFunction(child, source, functions, name, pendingDecorators);
+                if (fieldName)
+                    methods.push(fieldName);
                 pendingDecorators = [];
             }
         }
