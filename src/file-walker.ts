@@ -27,8 +27,29 @@ const SOURCE_EXTENSIONS = new Set([
 	".py",
 ]);
 
-const TEST_PATH_RE =
-	/(?:\.(test|spec)\.(ts|tsx|js|jsx)$|(?:^|\/)(__tests__|__mocks__|fixtures)\/|^tests?\/|\/tests?\/|\.stories\.(ts|tsx)$)/;
+const JS_EXT = "(?:[cm]?[jt]sx?)";
+const TEST_PATH_RE = new RegExp(
+	[
+		// x.test.ts, x.spec.tsx, x.test.mts, and NestJS's app.e2e-spec.ts
+		// (not any "-spec"/"-test" suffix: ab-test.ts, openapi-spec.ts are code)
+		`\\.(?:test|spec)\\.${JS_EXT}$`,
+		`[.-]e2e-spec\\.${JS_EXT}$`,
+		// test directories and fixtures
+		"(?:^|/)(?:__tests__|__mocks__|fixtures)/",
+		"^tests?/",
+		"/tests?/",
+		// test-support modules: x.mock.ts, x.mocks.ts, test-utils.ts, testUtils.ts, setupTests.ts
+		`\\.mocks?\\.${JS_EXT}$`,
+		`(?:^|/)(?:test[-_]?(?:utils?|helpers?|setup)|setup[-_]?tests)\\.${JS_EXT}$`,
+		// Python: test_x.py, x_test.py, conftest.py
+		"(?:^|/)test_[^/]*\\.py$",
+		"_test\\.py$",
+		"(?:^|/)conftest\\.py$",
+		// Storybook
+		"\\.stories\\.(?:ts|tsx)$",
+	].join("|"),
+	"i",
+);
 
 /** Classify a file path as test/non-test for reachability analysis. */
 export function isTestFile(filePath: string): boolean {
