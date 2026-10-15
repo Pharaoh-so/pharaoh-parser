@@ -34,6 +34,8 @@ const TEST_PATH_RE = new RegExp([
     `[.-]e2e-spec\\.${JS_EXT}$`,
     // test directories and fixtures
     "(?:^|/)(?:__tests__|__mocks__|fixtures)/",
+    // end-to-end suites: specs plus their page objects and helpers
+    "(?:^|/)(?:e2e|cypress)/",
     "^tests?/",
     "/tests?/",
     // test-support modules: x.mock.ts, x.mocks.ts, test-utils.ts, testUtils.ts, setupTests.ts
