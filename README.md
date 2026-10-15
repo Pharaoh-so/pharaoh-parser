@@ -18,14 +18,15 @@ Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structur
 | Body hashes | `a3f8c2e1b9d04567` (one-way SHA-256 for dedup detection) |
 | Module boundaries | `{ name: "auth", files: ["src/auth/login.ts", ...] }` |
 | JSDoc/docstring summaries | First line, truncated to 200 chars |
+| Top-level constant values | `MAX_RETRIES = 3`, `API_BASE = "https://api.example.com"` (strings and numbers up to 128 characters) |
+| Decorators | `@Get("/users")`, `@app.route("/api")` |
 
 ## What it does NOT extract
 
 - **Source code** — function bodies are never captured
-- **String literals** — API keys, URLs, config values are invisible
+- **String literals inside functions** — only top-level constant values are captured (see above), and Pharaoh encrypts them per customer
 - **Comments** — only JSDoc/docstring first-line summaries (see note below)
 - **Environment variables** — `.env` values are never read
-- **Secrets** — tokens, passwords, credentials are not accessible to the parser
 - **File contents** — only structural metadata is extracted
 
 > **Note on JSDoc/docstrings:** The parser extracts the first line of JSDoc comments and Python docstrings (truncated to 200 characters) as function documentation. If your documentation contains sensitive information, the parser output will include it. This mirrors what any code review tool or IDE would show.
@@ -92,9 +93,11 @@ node bin/inspect.js /path/to/your/repo --output result.json
 
 ## How this connects to Pharaoh
 
-This parser is step 1 of Pharaoh's pipeline. The output you see here is exactly what Pharaoh ingests to build its knowledge graph. The value Pharaoh adds is everything downstream:
+This parser is step 1 of Pharaoh's pipeline, and the extraction you can run yourself. Pharaoh's hosted pipeline reads the same temporary clone to add more: which function calls which, HTTP routes, cron schedules, database tables, event handlers, environment variable names (never their values), and each file's last-modified date and how often it changed in the last 90 days. It deletes the clone when the run ends. Function signatures, doc comments, API routes and constant values are encrypted per customer before they're stored.
 
-- **16 MCP tools** that answer architectural questions from the graph
+What Pharaoh adds on top:
+
+- **MCP tools** that answer architectural questions from the graph
 - **Neo4j knowledge graph** with cross-file dependency resolution
 - **Auto-remapping** on every git push via GitHub App webhooks
 - **Multi-tenant infrastructure** with tenant isolation
