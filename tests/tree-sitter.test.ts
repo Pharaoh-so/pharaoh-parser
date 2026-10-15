@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { walkFiles } from "../src/file-walker.js";
@@ -226,6 +228,41 @@ describe("file-walker", () => {
 
 		expect(files.length).toBe(4);
 		expect(files.every((f) => f.relativePath.endsWith(".ts"))).toBe(true);
+	});
+	it("walks .mts and .cts files and parses them as TypeScript", () => {
+		// Breaks if the walker drops ES/CommonJS-module TypeScript again: a
+		// `vite.config.mts` would then be invisible, and every helper it
+		// imports would look unused.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "walk-mts-"));
+		try {
+			fs.writeFileSync(
+				path.join(dir, "vite.config.mts"),
+				'import { emit } from "./plugin";\nexport function config(): string {\n  return emit();\n}\n',
+			);
+			fs.writeFileSync(
+				path.join(dir, "legacy.cts"),
+				"export function old(): number {\n  return 1;\n}\n",
+			);
+			fs.writeFileSync(
+				path.join(dir, "plugin.ts"),
+				'export function emit(): string {\n  return "";\n}\n',
+			);
+
+			const files = walkFiles(dir)
+				.map((f) => f.relativePath)
+				.sort();
+			expect(files).toEqual(["legacy.cts", "plugin.ts", "vite.config.mts"]);
+
+			const parsed = parseFile(
+				path.join(dir, "vite.config.mts"),
+				"vite.config.mts",
+			);
+			expect(parsed.language).toBe("typescript");
+			expect(parsed.functions.map((f) => f.name)).toEqual(["config"]);
+			expect(parsed.imports.map((i) => i.source)).toEqual(["./plugin"]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
