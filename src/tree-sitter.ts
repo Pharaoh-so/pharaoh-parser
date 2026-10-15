@@ -502,8 +502,20 @@ function extractFunction(
 	});
 
 	if (isExported) {
-		exports.push({ name, kind: "function", isDefault: false });
+		exports.push({
+			name,
+			kind: "function",
+			isDefault: isDefaultExportDeclaration(node),
+		});
 	}
+}
+
+/** Whether a declaration is the module's default export (`export default function X`). */
+function isDefaultExportDeclaration(node: SyntaxNode): boolean {
+	return (
+		node.parent?.type === "export_statement" &&
+		node.parent.children.some((c) => c.type === "default")
+	);
 }
 
 function extractMethod(
@@ -700,7 +712,11 @@ function extractClass(
 	});
 
 	if (isExported) {
-		exports.push({ name, kind: "class", isDefault: false });
+		exports.push({
+			name,
+			kind: "class",
+			isDefault: isDefaultExportDeclaration(node),
+		});
 	}
 }
 

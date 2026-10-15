@@ -367,3 +367,35 @@ describe("module-detector", () => {
 		expect(utils.loc).toBeGreaterThan(0);
 	});
 });
+
+describe("default-exported declarations", () => {
+	it("marks `export default function` and `export default class` as default exports", () => {
+		// Breaks if a default-exported declaration is reported as a named export:
+		// an importer uses it under any local name, so its own name may appear
+		// nowhere else, and dead-code analysis must know it's the default.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "default-exports-"));
+		try {
+			const file = path.join(dir, "page.tsx");
+			fs.writeFileSync(
+				file,
+				[
+					"export default function HomePage() {",
+					"  return null;",
+					"}",
+					"export function helper() {",
+					"  return 1;",
+					"}",
+					"export default class Store {}",
+				].join("\n"),
+			);
+			const parsed = parseFile(file, "page.tsx");
+			expect(parsed.exports).toEqual([
+				{ name: "HomePage", kind: "function", isDefault: true },
+				{ name: "helper", kind: "function", isDefault: false },
+				{ name: "Store", kind: "class", isDefault: true },
+			]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
