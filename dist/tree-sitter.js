@@ -392,8 +392,17 @@ function extractFunction(node, source, functions, exports, className) {
         className,
     });
     if (isExported) {
-        exports.push({ name, kind: "function", isDefault: false });
+        exports.push({
+            name,
+            kind: "function",
+            isDefault: isDefaultExportDeclaration(node),
+        });
     }
+}
+/** Whether a declaration is the module's default export (`export default function X`). */
+function isDefaultExportDeclaration(node) {
+    return (node.parent?.type === "export_statement" &&
+        node.parent.children.some((c) => c.type === "default"));
 }
 function extractMethod(node, source, functions, className, decorators) {
     const nameNode = node.childForFieldName("name");
@@ -544,7 +553,11 @@ function extractClass(node, source, classes, functions, exports, parentDecorator
         decorators: classDecorators.length > 0 ? classDecorators : undefined,
     });
     if (isExported) {
-        exports.push({ name, kind: "class", isDefault: false });
+        exports.push({
+            name,
+            kind: "class",
+            isDefault: isDefaultExportDeclaration(node),
+        });
     }
 }
 /**
