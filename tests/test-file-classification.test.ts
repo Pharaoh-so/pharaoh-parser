@@ -26,6 +26,10 @@ describe("isTestFile", () => {
 		"app/models/user_test.py",
 		"app/conftest.py",
 		"src/button.stories.tsx",
+		// Playwright/Cypress suites: page objects and helpers live next to the specs
+		"e2e/pages/login.ts",
+		"apps/web/e2e/utils/wait.ts",
+		"cypress/support/commands.ts",
 	])("%s is a test file", (filePath) => {
 		expect(isTestFile(filePath)).toBe(true);
 	});
@@ -41,6 +45,9 @@ describe("isTestFile", () => {
 		"src/protest_test_data.json",
 		"src/features/ab-test.ts",
 		"src/openapi-spec.ts",
+		"src/e2e-encryption/keys.ts",
+		// a scraper's Playwright driver is production code
+		"src/playwright/browser.ts",
 	])("%s is production code", (filePath) => {
 		expect(isTestFile(filePath)).toBe(false);
 	});
