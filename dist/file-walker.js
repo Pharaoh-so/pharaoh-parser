@@ -18,6 +18,8 @@ const HARDCODED_IGNORES = [
 const SOURCE_EXTENSIONS = new Set([
     ".ts",
     ".tsx",
+    ".mts",
+    ".cts",
     ".js",
     ".jsx",
     ".mjs",
