@@ -261,6 +261,24 @@ describe("javascript file support", () => {
 		expect(appFn).toBeDefined();
 	});
 
+	// Breaks when: .js is read with the TypeScript grammar, which can't parse
+	// JSX. Create React App puts JSX in .js (App.js, index.js): the grammar
+	// errors stretch Badge over App and drop App, the default export.
+	it("parses JSX in .js files", () => {
+		const result = parseFile(
+			path.join(JS_DIR, "src/app-cra.js"),
+			"src/app-cra.js",
+		);
+
+		expect(result.language).toBe("javascript");
+		expect(
+			result.functions.map((f) => `${f.name}@${f.lineStart}-${f.lineEnd}`),
+		).toEqual(["Total@3-12", "format@14-16", "Badge@18-18", "App@20-22"]);
+		expect(
+			result.exports.map((e) => `${e.name}${e.isDefault ? " (default)" : ""}`),
+		).toEqual(["Total", "Badge", "App (default)"]);
+	});
+
 	it("file walker picks up .js and .jsx files", () => {
 		const files = walkFiles(JS_DIR);
 

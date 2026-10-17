@@ -20,9 +20,15 @@ const COMPLEXITY_TYPES = new Set([
 ]);
 // Binary expression operators that add complexity
 const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
-/** File extensions that should use the TSX parser (supports JSX syntax). */
-const JSX_EXTENSIONS = new Set([".tsx", ".jsx"]);
-/** File extensions treated as JavaScript (parsed with TS grammar, which is a superset). */
+/**
+ * File extensions read with the plain TypeScript grammar. Only TypeScript's
+ * own extensions can't hold JSX, and the TSX grammar would misread their
+ * `<T>x` casts. Everything else can (.tsx, .jsx, and .js like Create React
+ * App's App.js), so it gets the TSX grammar, which reads plain JavaScript the
+ * same.
+ */
+const TS_ONLY_EXTENSIONS = new Set([".ts", ".mts", ".cts"]);
+/** File extensions treated as JavaScript (`language`). */
 const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 /** Max length for extractable scalar constant values. */
 const MAX_CONSTANT_VALUE_LENGTH = 128;
@@ -118,8 +124,7 @@ function extractConstants(rootNode) {
 export function parseFile(absolutePath, relativePath) {
     const source = fs.readFileSync(absolutePath, "utf-8");
     const ext = relativePath.slice(relativePath.lastIndexOf("."));
-    const useJsx = JSX_EXTENSIONS.has(ext);
-    const parser = useJsx ? tsxParser : tsParser;
+    const parser = TS_ONLY_EXTENSIONS.has(ext) ? tsParser : tsxParser;
     const tree = parser.parse(source);
     if (!tree)
         throw new Error(`Failed to parse ${relativePath}`);
