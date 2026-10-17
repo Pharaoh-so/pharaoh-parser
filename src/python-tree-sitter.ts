@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import {
+	type OnTree,
 	computeBodyHash as computeBodyHashShared,
 	computeComplexity as computeComplexityShared,
 	countParams as countParamsShared,
@@ -33,9 +34,17 @@ const COMPLEXITY_TYPES = new Set([
 // Boolean operators that add complexity branches
 const COMPLEXITY_OPERATORS = new Set(["and", "or"]);
 
+/**
+ * Parses a Python file into its structural metadata.
+ * @param absolutePath - The file to read
+ * @param relativePath - Its path in the repo, as recorded in the result
+ * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @returns The file's functions, classes, imports and exports
+ */
 export function parseFile(
 	absolutePath: string,
 	relativePath: string,
+	onTree?: OnTree,
 ): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
 	const tree = pyParser.parse(source);
@@ -65,7 +74,7 @@ export function parseFile(
 			allNames,
 		);
 
-		return {
+		const parsed: ParsedFile = {
 			path: relativePath,
 			language: "python",
 			loc: lines.length,
@@ -74,6 +83,8 @@ export function parseFile(
 			imports,
 			exports,
 		};
+		onTree?.(tree.rootNode, parsed);
+		return parsed;
 	} finally {
 		tree.delete();
 	}

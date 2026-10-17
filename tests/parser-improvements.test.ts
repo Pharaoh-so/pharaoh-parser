@@ -403,3 +403,37 @@ describe("regression — existing Python parsing unchanged", () => {
 		expect(add!.isExported).toBe(true);
 	});
 });
+
+// ── Lending the tree ──
+
+// Breaks when: parseFile stops handing its tree to onTree, hands it a
+// different ParsedFile than it returns, or frees the tree first. Pharaoh reads
+// call sites from the lent tree instead of parsing every file a second time.
+describe("onTree", () => {
+	it.each([
+		["typescript", parseFile, "js-support", "src/helpers.js", "program"],
+		["python", parsePythonFile, "python-simple", "src/main.py", "module"],
+	])(
+		"%s parseFile lends its live tree with the parsed file",
+		(_lang, parse, fixture, rel, rootType) => {
+			const seen: { rootType: string; children: number; parsed: unknown }[] =
+				[];
+			const result = parse(
+				path.join(FIXTURES_DIR, fixture, rel),
+				rel,
+				(rootNode, parsed) => {
+					seen.push({
+						rootType: rootNode.type,
+						children: rootNode.namedChildCount,
+						parsed,
+					});
+				},
+			);
+
+			expect(seen).toHaveLength(1);
+			expect(seen[0].rootType).toBe(rootType);
+			expect(seen[0].children).toBeGreaterThan(0);
+			expect(seen[0].parsed).toBe(result);
+		},
+	);
+});
