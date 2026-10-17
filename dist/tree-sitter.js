@@ -121,7 +121,14 @@ function extractConstants(rootNode) {
     }
     return constants;
 }
-export function parseFile(absolutePath, relativePath) {
+/**
+ * Parses a TypeScript or JavaScript file into its structural metadata.
+ * @param absolutePath - The file to read
+ * @param relativePath - Its path in the repo, as recorded in the result
+ * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @returns The file's functions, classes, imports, exports and constants
+ */
+export function parseFile(absolutePath, relativePath, onTree) {
     const source = fs.readFileSync(absolutePath, "utf-8");
     const ext = relativePath.slice(relativePath.lastIndexOf("."));
     const parser = TS_ONLY_EXTENSIONS.has(ext) ? tsParser : tsxParser;
@@ -149,7 +156,7 @@ export function parseFile(absolutePath, relativePath) {
         else {
             language = ext === ".tsx" ? "tsx" : "typescript";
         }
-        return {
+        const parsed = {
             path: relativePath,
             language,
             loc: lines.length,
@@ -159,6 +166,8 @@ export function parseFile(absolutePath, relativePath) {
             exports,
             ...(constants.length > 0 ? { constants } : {}),
         };
+        onTree?.(tree.rootNode, parsed);
+        return parsed;
     }
     finally {
         tree.delete();

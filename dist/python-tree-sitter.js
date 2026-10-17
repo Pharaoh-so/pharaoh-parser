@@ -18,7 +18,14 @@ const COMPLEXITY_TYPES = new Set([
 ]);
 // Boolean operators that add complexity branches
 const COMPLEXITY_OPERATORS = new Set(["and", "or"]);
-export function parseFile(absolutePath, relativePath) {
+/**
+ * Parses a Python file into its structural metadata.
+ * @param absolutePath - The file to read
+ * @param relativePath - Its path in the repo, as recorded in the result
+ * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @returns The file's functions, classes, imports and exports
+ */
+export function parseFile(absolutePath, relativePath, onTree) {
     const source = fs.readFileSync(absolutePath, "utf-8");
     const tree = pyParser.parse(source);
     if (!tree)
@@ -35,7 +42,7 @@ export function parseFile(absolutePath, relativePath) {
         // Extract __all__ for export detection
         const allNames = extractDunderAll(tree.rootNode);
         extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
-        return {
+        const parsed = {
             path: relativePath,
             language: "python",
             loc: lines.length,
@@ -44,6 +51,8 @@ export function parseFile(absolutePath, relativePath) {
             imports,
             exports,
         };
+        onTree?.(tree.rootNode, parsed);
+        return parsed;
     }
     finally {
         tree.delete();

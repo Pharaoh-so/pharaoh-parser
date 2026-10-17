@@ -4,7 +4,15 @@
  */
 
 import { createHash } from "node:crypto";
+import type { ParsedFile } from "./types.js";
 import type { SyntaxNode } from "./wasm-init.js";
+
+/**
+ * Receives a file's syntax tree, and the ParsedFile parseFile returns, while
+ * the tree is still alive, so a caller can read more from it without parsing
+ * the file again. parseFile frees the tree when this returns: keep no node.
+ */
+export type OnTree = (rootNode: SyntaxNode, parsed: ParsedFile) => void;
 
 /**
  * Compute a normalized SHA-256 body hash for deduplication.
