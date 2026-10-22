@@ -399,3 +399,70 @@ describe("default-exported declarations", () => {
 		}
 	});
 });
+
+describe("function expressions held by variables", () => {
+	it("extracts `const f = function () {}` like an arrow, and nothing that only calls one", () => {
+		// Breaks if a variable holding a function expression isn't a function: its
+		// calls go unattributed and its callers' edges have nowhere to land.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "function-expressions-"));
+		try {
+			const file = path.join(dir, "lib.js");
+			fs.writeFileSync(
+				file,
+				[
+					"const plain = function (a, b) {",
+					"  return a + b;",
+					"};",
+					"export const loader = async function load(importer) {",
+					"  return importer();",
+					"};",
+					"(function ($) {",
+					"  var formatName = function (name) { return name; };",
+					"})(jQuery);",
+					"const handlers = register(function () {});",
+				].join("\n"),
+			);
+			const parsed = parseFile(file, "lib.js");
+			const fns = parsed.functions.map((f) => ({
+				name: f.name,
+				lines: `${f.lineStart}-${f.lineEnd}`,
+				exported: f.isExported,
+				async: f.isAsync,
+				params: f.paramCount,
+			}));
+			expect(fns).toEqual([
+				{
+					name: "plain",
+					lines: "1-3",
+					exported: false,
+					async: false,
+					params: 2,
+				},
+				{
+					name: "loader",
+					lines: "4-6",
+					exported: true,
+					async: true,
+					params: 1,
+				},
+				{
+					name: "formatName",
+					lines: "8-8",
+					exported: false,
+					async: false,
+					params: 1,
+				},
+			]);
+			expect(parsed.functions[1].signature).toBe(
+				"async const loader = function (importer)",
+			);
+			expect(parsed.exports).toContainEqual({
+				name: "loader",
+				kind: "function",
+				isDefault: false,
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
