@@ -81,14 +81,29 @@ Script parsing alone is not enough. A method or component used only from the tem
 - Vue 3.4 same-name shorthand (`:on-save` binds `onSave`).
 - Not handled (listed in the PR): `mixins`, and `setup()` return objects.
 
-**Issue 12 (from code review). What to do where the template can't be read.**
-A missed reference marks live code unused, so the parser errs toward referencing.
-- A (chosen):
-  - A template in another language or file (`lang="pug"`, `src`) lists every script name it could use, as kind `"template"`.
-  - An expression Babel can't parse (`:x="a // note"`) falls back to its identifiers.
-  - A walker failure (`@click="/* ; */"` threw and failed the whole file) falls back the same way.
-- B: emit nothing. Live functions read as unused, and one odd expression fails the file.
-- C: a `ParsedFile` flag telling Pharaoh to skip dead-code labels for the file. That is a new concept for the consumer to handle, where the refs above reuse the path it already needs.
+**Issue 12 (code review, revised after Codex review). What to do where the template can't be read.**
+A missed reference marks live code unused, but an invented one draws a CALLS edge that isn't there.
+- A (chosen, revised): report the uncertainty explicitly in `ParsedFile.unverifiedTemplateRefs`. Each entry has a reason, a line and candidate names, and never becomes a reference.
+  - Reasons: `"template-lang"` for Pug, `"template-src"` for `<template src>`, and `"unparsed-expression"` for an expression Babel can't parse or one the compiler's walker throws on (`@click="/* ; */"` used to fail the whole file).
+  - Pharaoh keeps candidates from being called Dead without drawing CALLS edges.
+- A, as first shipped in 8040ae8: these produced refs of kind `"template"` naming every script binding. The Codex review rejected that: it invents graph facts.
+- B: emit nothing. Live functions read as unused.
+- C: a file-level "skip dead-code labels" flag. That is coarser than naming the candidates.
+
+**Issue 13 (Codex review). Members that share a name.**
+A method, a computed property and a watcher may share a key (`total`), and a computed may have both a getter and a setter. Under one name they collide on one UID, and Pharaoh's chunked path drops the getter's calls.
+- A (chosen): name computed accessors and watchers by role, the way JavaScript names accessor functions:
+  - `get total` and `set total` for a computed; a function-form computed is its getter, `get total`;
+  - `watch total` for a watcher, and `watch count[0]`, `watch count[2]` inside a watcher array;
+  - methods and options keep their key; a hook that collides with a method gets `mounted#2`.
+
+  Template reads target the getter, assignments the setter, and `v-model`, `++` and `+=` both. Following Vue 3, a computed wins over a method of the same name.
+- B: keep plain keys and suffix only on collision. Names would change with option order, and readers couldn't tell a getter from a method.
+
+**Issue 14 (Codex review). `.bind`, `.call`, `.apply`.**
+`@click="handler.bind(null)"` produced a ref to member `bind` on receiver `handler`.
+- A (chosen): `.bind`, `.call` and `.apply` on a script binding target the binding. On a namespace import (`import * as api`), `api.call()` is a real member and keeps the receiver form.
+- B: drop the receiver form entirely. That would lose namespace members.
 
 ### Section 3: Wiring
 

@@ -20,7 +20,7 @@ Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structur
 | JSDoc/docstring summaries | First line, truncated to 200 chars |
 | Top-level constant values | `MAX_RETRIES = 3`, `API_BASE = "https://api.example.com"` (strings and numbers up to 128 characters) |
 | Decorators | `@Get("/users")`, `@app.route("/api")` |
-| Vue template references | `{ name: "save", kind: "event", line: 4 }` for `@click="save"` (names and lines only) |
+| Vue template references | `{ name: "save", kind: "event", line: 4 }` for `@click="save"` (names and lines only). Templates the parser can't read (Pug, `src`) are reported as unverified candidates, never as references |
 
 ## What it does NOT extract
 

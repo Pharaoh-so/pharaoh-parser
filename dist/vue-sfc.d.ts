@@ -7,7 +7,7 @@
  */
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { type ScriptSource } from "./embedded-script.js";
-import type { ParsedTemplateRef } from "./types.js";
+import type { ParsedTemplateRef, ParsedUnverifiedTemplateRefs } from "./types.js";
 import type { SyntaxNode } from "./wasm-init.js";
 /** A .vue file's blocks, read with Vue's compiler. */
 export interface VueSfc {
@@ -34,18 +34,35 @@ export declare function readVueSfc(source: string, relativePath: string): VueSfc
  * `user-card.vue` → `UserCard`, `[id].vue` → `Id`.
  */
 export declare function componentNameFromPath(relativePath: string): string;
+/** What a <script setup> component's template can reach in its script. */
+export interface SetupBindings {
+    /** Every name (see readSetupBindings). */
+    names: Set<string>;
+    /** Namespace imports (`import * as api`), whose members are real names (`api.call`). */
+    namespaces: Set<string>;
+}
 /**
  * Names a <script setup> component's template can use: the top-level imports
  * and declarations of both script blocks. Type-only imports and names bound
  * to compiler macros (`const { title } = defineProps()`, `const emit =
  * defineEmits()`) are left out: those are props and emits, not script code.
  */
-export declare function readSetupBindings(root: SyntaxNode): Set<string>;
+export declare function readSetupBindings(root: SyntaxNode): SetupBindings;
 /** A function an Options API object holds, and how Vue reaches it. */
 export interface OptionsMember {
-    /** Its key, or the computed property a getter or setter belongs to. */
+    /**
+     * The function's name: its key for a method or option (`save`, `mounted`);
+     * for a computed accessor or watcher, its role and key (`get total`,
+     * `set total`, `watch draft`, `watch draft[1]` in an array), the way
+     * JavaScript names accessors. A method, a computed property and a watcher
+     * may share a key; their names never collide.
+     */
     name: string;
-    /** The method_definition, or the pair whose value may be a function. */
+    /** The key it is declared under: what the template and `this` call it (`total`). */
+    key: string;
+    /** "get"/"set" for a computed accessor, "watch" for a watcher: its signature's keyword. */
+    role?: "get" | "set" | "watch";
+    /** The method_definition, the pair, or the array element whose value may be a function. */
     node: SyntaxNode;
     /**
      * "member": a method or computed property, which the template and `this`
@@ -85,12 +102,20 @@ export declare function readOptionsApi(root: SyntaxNode): OptionsApi | null;
  * a `@Watch(...)` handler (vue-property-decorator).
  */
 export declare function isClassComponentHook(name: string, decorators?: readonly string[]): boolean;
+/**
+ * The component-class functions a template name reaches: its getter for a
+ * read, its setter for a write. A method is one function for both.
+ */
+export interface MemberTargets {
+    read?: string;
+    write?: string;
+}
 /** What a template's names can resolve to. */
 export interface TemplateScope {
-    /** <script setup> bindings (see readSetupBindings); empty without <script setup>. */
-    setupBindings: ReadonlySet<string>;
-    /** Methods and computed properties of the component class (Options API or class component). */
-    members: ReadonlySet<string>;
+    /** <script setup> bindings; empty without <script setup>. */
+    setup: SetupBindings;
+    /** Methods and computed properties of the component class, by the name the template uses. */
+    members: ReadonlyMap<string, MemberTargets>;
     /** Options API members that stand for a script function (see OptionsApi.aliases). */
     aliases: ReadonlyMap<string, string>;
     /** The component class: members belong to it, and its file name refers to it. */
@@ -100,16 +125,22 @@ export interface TemplateScope {
     /** Options API `directives` registry. */
     directives: ReadonlyMap<string, string>;
 }
+/** What a template uses: references read from its AST, and what it may use but couldn't be read. */
+export interface TemplateUses {
+    refs: ParsedTemplateRef[];
+    unverified: ParsedUnverifiedTemplateRefs[];
+}
 /**
  * Read which script names a component's template uses, in document order.
  * A name counts only when it resolves to the script: template locals (`v-for`
  * aliases, slot props, handler parameters), props, `data()` keys and globals
- * like `$event` do not. Nothing of the template's text is kept but names.
+ * like `$event` do not. A computed property is read through its getter and
+ * written through its setter. Nothing of the template's text is kept but names.
  *
- * Where the template can't be read, it errs toward referencing: a template in
- * another language or file (`lang="pug"`, `src`) lists every name it could
- * use, and an expression Babel can't parse falls back to its identifiers.
- * A missed reference would mark live code unused.
+ * What can't be read is reported as unverified, never as references: a
+ * template in another language or file (`lang="pug"`, `src`) with every name
+ * it could use, and an expression that can't be parsed with the names its
+ * text contains.
  */
-export declare function readTemplateRefs(descriptor: SFCDescriptor, scope: TemplateScope): ParsedTemplateRef[];
+export declare function readTemplateRefs(descriptor: SFCDescriptor, scope: TemplateScope): TemplateUses;
 //# sourceMappingURL=vue-sfc.d.ts.map

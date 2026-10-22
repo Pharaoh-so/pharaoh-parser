@@ -13,7 +13,11 @@ import type {
 	SFCTemplateBlock,
 } from "@vue/compiler-sfc";
 import { type ScriptSource, blankOutside } from "./embedded-script.js";
-import type { ParsedTemplateRef } from "./types.js";
+import type {
+	ParsedRefTarget,
+	ParsedTemplateRef,
+	ParsedUnverifiedTemplateRefs,
+} from "./types.js";
 import type { SyntaxNode } from "./wasm-init.js";
 
 type VueCompiler = typeof import("@vue/compiler-sfc");
@@ -134,14 +138,23 @@ const MACROS = new Set([
 	"withDefaults",
 ]);
 
+/** What a <script setup> component's template can reach in its script. */
+export interface SetupBindings {
+	/** Every name (see readSetupBindings). */
+	names: Set<string>;
+	/** Namespace imports (`import * as api`), whose members are real names (`api.call`). */
+	namespaces: Set<string>;
+}
+
 /**
  * Names a <script setup> component's template can use: the top-level imports
  * and declarations of both script blocks. Type-only imports and names bound
  * to compiler macros (`const { title } = defineProps()`, `const emit =
  * defineEmits()`) are left out: those are props and emits, not script code.
  */
-export function readSetupBindings(root: SyntaxNode): Set<string> {
+export function readSetupBindings(root: SyntaxNode): SetupBindings {
 	const names = new Set<string>();
+	const namespaces = new Set<string>();
 	for (const statement of root.namedChildren) {
 		const node =
 			statement.type === "export_statement"
@@ -149,7 +162,10 @@ export function readSetupBindings(root: SyntaxNode): Set<string> {
 				: statement;
 		switch (node?.type) {
 			case "import_statement":
-				for (const name of importedNames(node)) names.add(name);
+				for (const { name, namespace } of importedNames(node)) {
+					names.add(name);
+					if (namespace) namespaces.add(name);
+				}
 				break;
 			case "function_declaration":
 			case "generator_function_declaration":
@@ -174,27 +190,29 @@ export function readSetupBindings(root: SyntaxNode): Set<string> {
 				break;
 		}
 	}
-	return names;
+	return { names, namespaces };
 }
 
 /** Local names an import binds as values (type-only imports bind none). */
-function importedNames(node: SyntaxNode): string[] {
+function importedNames(
+	node: SyntaxNode,
+): { name: string; namespace: boolean }[] {
 	if (node.children.some((c) => c.type === "type")) return [];
 	const clause = node.namedChildren.find((c) => c.type === "import_clause");
-	const names: string[] = [];
+	const names: { name: string; namespace: boolean }[] = [];
 	for (const part of clause?.namedChildren ?? []) {
 		if (part.type === "identifier") {
-			names.push(part.text);
+			names.push({ name: part.text, namespace: false });
 		} else if (part.type === "namespace_import") {
 			const alias = part.namedChildren.find((c) => c.type === "identifier");
-			if (alias) names.push(alias.text);
+			if (alias) names.push({ name: alias.text, namespace: true });
 		} else if (part.type === "named_imports") {
 			for (const spec of part.namedChildren) {
 				if (spec.type !== "import_specifier") continue;
 				if (spec.children.some((c) => c.type === "type")) continue;
 				const local =
 					spec.childForFieldName("alias") ?? spec.childForFieldName("name");
-				if (local) names.push(local.text);
+				if (local) names.push({ name: local.text, namespace: false });
 			}
 		}
 	}
@@ -228,9 +246,19 @@ function patternNames(node: SyntaxNode | null): string[] {
 
 /** A function an Options API object holds, and how Vue reaches it. */
 export interface OptionsMember {
-	/** Its key, or the computed property a getter or setter belongs to. */
+	/**
+	 * The function's name: its key for a method or option (`save`, `mounted`);
+	 * for a computed accessor or watcher, its role and key (`get total`,
+	 * `set total`, `watch draft`, `watch draft[1]` in an array), the way
+	 * JavaScript names accessors. A method, a computed property and a watcher
+	 * may share a key; their names never collide.
+	 */
 	name: string;
-	/** The method_definition, or the pair whose value may be a function. */
+	/** The key it is declared under: what the template and `this` call it (`total`). */
+	key: string;
+	/** "get"/"set" for a computed accessor, "watch" for a watcher: its signature's keyword. */
+	role?: "get" | "set" | "watch";
+	/** The method_definition, the pair, or the array element whose value may be a function. */
 	node: SyntaxNode;
 	/**
 	 * "member": a method or computed property, which the template and `this`
@@ -280,7 +308,14 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 				for (const method of objectMembers(value)) {
 					const target = identifierValue(method.node);
 					if (target) api.aliases.set(method.name, target);
-					else api.members.push({ ...method, reach: "member" });
+					else {
+						api.members.push({
+							name: method.name,
+							key: method.name,
+							node: method.node,
+							reach: "member",
+						});
+					}
 				}
 				break;
 			case "computed":
@@ -293,10 +328,18 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 					const accessors = objectMembers(pairValue(computed.node)).filter(
 						(m) => m.name === "get" || m.name === "set",
 					);
-					for (const { node } of accessors.length > 0
+					// `total() {}` is a getter; `total: { get() {}, set(v) {} }` has both
+					for (const { name: role, node } of accessors.length > 0
 						? accessors
-						: [computed]) {
-						api.members.push({ name: computed.name, node, reach: "member" });
+						: [{ name: "get", node: computed.node }]) {
+						const accessor = role === "set" ? "set" : "get";
+						api.members.push({
+							name: `${accessor} ${computed.name}`,
+							key: computed.name,
+							role: accessor,
+							node,
+							reach: "member",
+						});
 					}
 				}
 				break;
@@ -314,7 +357,12 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 			default:
 				// data(), setup(), mounted() and every other option holding a
 				// function; non-function options are dropped by the caller
-				api.members.push({ ...option, reach: "runtime" });
+				api.members.push({
+					name: option.name,
+					key: option.name,
+					node: option.node,
+					reach: "runtime",
+				});
 		}
 	}
 	return api;
@@ -323,8 +371,14 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 /**
  * Read one watcher: `x(v) {}`, `x: function () {}`, `x: "persist"`,
  * `x: logChange`, `x: { handler, immediate }` or an array of those.
+ * @param index - The watcher's position in an array of handlers
  */
-function readWatcher(api: OptionsApi, name: string, entry: SyntaxNode): void {
+function readWatcher(
+	api: OptionsApi,
+	key: string,
+	entry: SyntaxNode,
+	index?: number,
+): void {
 	const value = entry.type === "pair" ? pairValue(entry) : entry;
 	const line = (value ?? entry).startPosition.row + 1;
 	switch (value?.type) {
@@ -340,18 +394,24 @@ function readWatcher(api: OptionsApi, name: string, entry: SyntaxNode): void {
 			api.watcherTargets.push({ name: value.text, line, isMethod: false });
 			return;
 		case "array":
-			for (const element of value.namedChildren) {
-				readWatcher(api, name, element);
-			}
+			value.namedChildren.forEach((element, i) => {
+				readWatcher(api, key, element, i);
+			});
 			return;
 		case "object": {
 			const handler = objectMembers(value).find((m) => m.name === "handler");
-			if (handler) readWatcher(api, name, handler.node);
+			if (handler) readWatcher(api, key, handler.node, index);
 			return;
 		}
 		default:
 			// A method, or a pair or array element holding a function
-			api.members.push({ name, node: entry, reach: "runtime" });
+			api.members.push({
+				name: `watch ${key}${index === undefined ? "" : `[${index}]`}`,
+				key,
+				role: "watch",
+				node: entry,
+				reach: "runtime",
+			});
 	}
 }
 
@@ -494,12 +554,21 @@ export function isClassComponentHook(
 	);
 }
 
+/**
+ * The component-class functions a template name reaches: its getter for a
+ * read, its setter for a write. A method is one function for both.
+ */
+export interface MemberTargets {
+	read?: string;
+	write?: string;
+}
+
 /** What a template's names can resolve to. */
 export interface TemplateScope {
-	/** <script setup> bindings (see readSetupBindings); empty without <script setup>. */
-	setupBindings: ReadonlySet<string>;
-	/** Methods and computed properties of the component class (Options API or class component). */
-	members: ReadonlySet<string>;
+	/** <script setup> bindings; empty without <script setup>. */
+	setup: SetupBindings;
+	/** Methods and computed properties of the component class, by the name the template uses. */
+	members: ReadonlyMap<string, MemberTargets>;
 	/** Options API members that stand for a script function (see OptionsApi.aliases). */
 	aliases: ReadonlyMap<string, string>;
 	/** The component class: members belong to it, and its file name refers to it. */
@@ -509,6 +578,15 @@ export interface TemplateScope {
 	/** Options API `directives` registry. */
 	directives: ReadonlyMap<string, string>;
 }
+
+/** What a template uses: references read from its AST, and what it may use but couldn't be read. */
+export interface TemplateUses {
+	refs: ParsedTemplateRef[];
+	unverified: ParsedUnverifiedTemplateRefs[];
+}
+
+/** How an expression uses a name: `x`, `x = 1`, or `x++` / `x += 1` / `v-model="x"`. */
+type Access = "read" | "write" | "readwrite";
 
 /** Directives Vue implements itself; any other `v-x` is a custom directive. */
 const BUILTIN_DIRECTIVES = new Set([
@@ -530,112 +608,157 @@ const BUILTIN_DIRECTIVES = new Set([
 	"is",
 ]);
 
+/** Function.prototype methods: `handler.bind(null)` still targets `handler`. */
+const FUNCTION_METHODS = new Set(["bind", "call", "apply"]);
+
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /**
  * Read which script names a component's template uses, in document order.
  * A name counts only when it resolves to the script: template locals (`v-for`
  * aliases, slot props, handler parameters), props, `data()` keys and globals
- * like `$event` do not. Nothing of the template's text is kept but names.
+ * like `$event` do not. A computed property is read through its getter and
+ * written through its setter. Nothing of the template's text is kept but names.
  *
- * Where the template can't be read, it errs toward referencing: a template in
- * another language or file (`lang="pug"`, `src`) lists every name it could
- * use, and an expression Babel can't parse falls back to its identifiers.
- * A missed reference would mark live code unused.
+ * What can't be read is reported as unverified, never as references: a
+ * template in another language or file (`lang="pug"`, `src`) with every name
+ * it could use, and an expression that can't be parsed with the names its
+ * text contains.
  */
 export function readTemplateRefs(
 	descriptor: SFCDescriptor,
 	scope: TemplateScope,
-): ParsedTemplateRef[] {
+): TemplateUses {
 	const template = descriptor.template;
-	if (!template) return [];
+	if (!template) return { refs: [], unverified: [] };
 	if (template.src || (template.lang && template.lang !== "html")) {
-		return unreadTemplateRefs(scope, template.loc.start.line);
+		return {
+			refs: [],
+			unverified: [
+				{
+					reason: template.src ? "template-src" : "template-lang",
+					line: template.loc.start.line,
+					...(template.src ? { src: template.src } : { lang: template.lang }),
+					candidates: everyTarget(scope),
+				},
+			],
+		};
 	}
 	const root = template.ast;
-	if (!root) return [];
+	if (!root) return { refs: [], unverified: [] };
 
 	const refs: ParsedTemplateRef[] = [];
+	const unverified: ParsedUnverifiedTemplateRefs[] = [];
 	const seen = new Set<string>();
-	const add = (ref: ParsedTemplateRef) => {
-		const key = `${ref.kind}|${ref.line}|${ref.receiver ?? ""}|${ref.className ?? ""}|${ref.name}`;
-		if (seen.has(key)) return;
-		seen.add(key);
-		refs.push(ref);
-	};
-
-	/** Add a reference to `name` if it resolves to the script. */
-	const resolve = (
-		name: string,
+	const add = (
+		target: ParsedRefTarget,
 		kind: ParsedTemplateRef["kind"],
 		line: number,
-		member?: string,
 	) => {
-		if (scope.setupBindings.has(name)) {
-			add(
-				member
-					? { name: member, kind, line, receiver: name }
-					: { name, kind, line },
-			);
-		} else if (scope.members.has(name)) {
-			add({ name, kind, line, className: scope.componentName });
-		} else {
-			const target = scope.aliases.get(name);
-			if (target) add({ name: target, kind, line });
-		}
+		const key = `${kind}|${line}|${targetKey(target)}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		refs.push({ ...target, kind, line });
 	};
 
-	/** Resolve a name unless the template declares it. */
+	/** What `name` reaches in the script; `member` is read off it (`name.member`). */
+	const targets = (
+		name: string,
+		access: Access,
+		member?: string,
+	): ParsedRefTarget[] => {
+		if (scope.setup.names.has(name)) {
+			// `api.call()` on a namespace import calls its member `call`;
+			// `handler.bind(null)` still targets `handler`
+			const isMember =
+				member !== undefined &&
+				(scope.setup.namespaces.has(name) || !FUNCTION_METHODS.has(member));
+			return [isMember ? { name: member, receiver: name } : { name }];
+		}
+		const fns = scope.members.get(name);
+		if (fns) {
+			const names = [
+				access === "write" ? undefined : fns.read,
+				access === "read" ? undefined : fns.write,
+			];
+			return names
+				.filter((n): n is string => n !== undefined)
+				.map((n) => ({ name: n, className: scope.componentName }));
+		}
+		const alias = scope.aliases.get(name);
+		return alias ? [{ name: alias }] : [];
+	};
+
+	/** Reference a name unless the template declares it. */
 	const visitName = (
 		name: string,
 		kind: ParsedTemplateRef["kind"],
 		line: number,
 		locals: ReadonlySet<string>,
+		access: Access = "read",
 	) => {
-		if (!locals.has(name)) resolve(name, kind, line);
+		if (locals.has(name)) return;
+		for (const target of targets(name, access)) add(target, kind, line);
 	};
 
-	/** Every identifier-like word, for an expression Babel can't parse. */
-	const scanNames = (
+	/** An expression that can't be parsed: the names its text contains, unverified. */
+	const unparsed = (
 		content: string,
 		kind: ParsedTemplateRef["kind"],
-		firstLine: number,
+		line: number,
 		locals: ReadonlySet<string>,
 	) => {
+		const candidates = new Map<string, ParsedRefTarget>();
 		for (const match of content.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/g)) {
-			const before = content.slice(0, match.index);
-			const line = firstLine + (before.match(/\n/g)?.length ?? 0);
-			visitName(match[0], kind, line, locals);
+			if (locals.has(match[0])) continue;
+			for (const target of targets(match[0], "readwrite")) {
+				candidates.set(targetKey(target), target);
+			}
 		}
+		unverified.push({
+			reason: "unparsed-expression",
+			kind,
+			line,
+			candidates: [...candidates.values()],
+		});
 	};
 
 	const visitExpression = (
 		exp: ExpressionNode | undefined,
 		kind: ParsedTemplateRef["kind"],
 		locals: ReadonlySet<string>,
+		access: Access = "read",
 	) => {
 		if (!exp || !("content" in exp) || exp.isStatic) return;
 		const { ast, content, loc } = exp;
 		if (ast === false) {
 			// Babel couldn't parse it (`:x="a // note"`)
-			scanNames(content, kind, loc.start.line, locals);
+			unparsed(content, kind, loc.start.line, locals);
 			return;
 		}
 		if (!ast) {
 			// A bare identifier (the compiler skips parsing those)
 			const name = content.trim();
-			if (IDENTIFIER.test(name)) visitName(name, kind, loc.start.line, locals);
+			if (IDENTIFIER.test(name)) {
+				visitName(name, kind, loc.start.line, locals, access);
+			}
 			return;
 		}
 		const knownIds: Record<string, number> = Object.create(null);
 		for (const local of locals) knownIds[local] = 1;
+		const found: { target: ParsedRefTarget; line: number }[] = [];
 		try {
 			compiler().walkIdentifiers(
 				ast,
-				(id, parent) => {
+				(id, parent, parentStack) => {
 					// The compiler parses `(${content})`: lines count from the expression's start
 					const line = loc.start.line + (id.loc?.start.line ?? 1) - 1;
-					resolve(id.name, kind, line, memberName(id, parent));
+					const uses = targets(
+						id.name,
+						accessOf(id, parent, parentStack),
+						memberName(id, parent),
+					);
+					for (const target of uses) found.push({ target, line });
 				},
 				false,
 				[],
@@ -644,8 +767,10 @@ export function readTemplateRefs(
 		} catch {
 			// The walker reads `body[0]` of a handler with `;` but no statement
 			// (`@click="/* ; */"`); one odd expression must not fail the file
-			scanNames(content, kind, loc.start.line, locals);
+			unparsed(content, kind, loc.start.line, locals);
+			return;
 		}
+		for (const { target, line } of found) add(target, kind, line);
 	};
 
 	const visitTag = (element: ElementNode) => {
@@ -655,23 +780,29 @@ export function readTemplateRefs(
 		if (tag === "component") return;
 		const dot = tag.indexOf(".");
 		if (dot > 0) {
-			resolve(tag.slice(0, dot), "component", line, tag.slice(dot + 1));
+			for (const target of targets(
+				tag.slice(0, dot),
+				"read",
+				tag.slice(dot + 1),
+			)) {
+				add(target, "component", line);
+			}
 			return;
 		}
 		// Vue matches a tag to a name as written, camelized, then capitalized
 		const candidates = [tag, camelize(tag), capitalize(camelize(tag))];
 		for (const candidate of candidates) {
-			const name = scope.setupBindings.has(candidate)
+			const name = scope.setup.names.has(candidate)
 				? candidate
 				: scope.components.get(candidate);
 			if (name) {
-				add({ name, kind: "component", line });
+				add({ name }, "component", line);
 				return;
 			}
 		}
 		// A component can render itself by its file name
 		if (candidates.includes(scope.componentName)) {
-			add({ name: scope.componentName, kind: "component", line });
+			add({ name: scope.componentName }, "component", line);
 		}
 	};
 
@@ -680,10 +811,10 @@ export function readTemplateRefs(
 		const line = directive.loc.start.line;
 		// <script setup>: `v-focus` is the binding `vFocus`
 		const setupName = `v${capitalize(camel)}`;
-		const name = scope.setupBindings.has(setupName)
+		const name = scope.setup.names.has(setupName)
 			? setupName
 			: (scope.directives.get(directive.name) ?? scope.directives.get(camel));
-		if (name) add({ name, kind: "directive", line });
+		if (name) add({ name }, "directive", line);
 	};
 
 	const visitElement = (element: ElementNode, outer: ReadonlySet<string>) => {
@@ -701,11 +832,14 @@ export function readTemplateRefs(
 		if (vFor) visitExpression(vFor.forParseResult?.source, "directive", outer);
 		for (const directive of directives) {
 			if (directive === vFor || directive === vSlot) continue;
-			if (!BUILTIN_DIRECTIVES.has(directive.name))
+			if (!BUILTIN_DIRECTIVES.has(directive.name)) {
 				visitCustomDirective(directive);
+			}
 			const kind = directiveKind(directive, element);
 			visitExpression(directive.arg, kind, locals);
-			visitExpression(directive.exp, kind, locals);
+			// v-model reads its value and writes it back
+			const access = directive.name === "model" ? "readwrite" : "read";
+			visitExpression(directive.exp, kind, locals, access);
 			// Vue 3.4 same-name shorthand: `:on-save` binds `onSave`
 			const { arg } = directive;
 			if (
@@ -744,32 +878,46 @@ export function readTemplateRefs(
 	};
 
 	visitChildren(root.children, new Set());
-	return refs;
+	return { refs, unverified };
 }
 
-/**
- * For a template that can't be read: every name it could use, at the
- * template's first line, so nothing it uses reads as unused.
- */
-function unreadTemplateRefs(
-	scope: TemplateScope,
-	line: number,
-): ParsedTemplateRef[] {
+/** Everything a template can reach in the script, for one the parser can't read. */
+function everyTarget(scope: TemplateScope): ParsedRefTarget[] {
 	const names = new Set([
-		...scope.setupBindings,
+		...scope.setup.names,
 		...scope.aliases.values(),
 		...scope.components.values(),
 		...scope.directives.values(),
 	]);
+	const memberFunctions = new Set(
+		[...scope.members.values()].flatMap((t) => [t.read, t.write]),
+	);
 	return [
-		...[...names].map((name) => ({ name, kind: "template" as const, line })),
-		...[...scope.members].map((name) => ({
-			name,
-			kind: "template" as const,
-			line,
-			className: scope.componentName,
-		})),
+		...[...names].map((name) => ({ name })),
+		...[...memberFunctions]
+			.filter((name): name is string => name !== undefined)
+			.map((name) => ({ name, className: scope.componentName })),
 	];
+}
+
+function targetKey(target: ParsedRefTarget): string {
+	return `${target.receiver ?? ""}|${target.className ?? ""}|${target.name}`;
+}
+
+/** How an expression uses an identifier: assigned (`x = 1`), updated (`x++`, `x += 1`) or read. */
+function accessOf(
+	id: BabelIdentifier,
+	parent: BabelNode | null,
+	parentStack: BabelNode[],
+): Access {
+	if (parent?.type === "AssignmentExpression" && parent.left === id) {
+		return parent.operator === "=" ? "write" : "readwrite";
+	}
+	if (parent?.type === "UpdateExpression") return "readwrite";
+	if (parent && compiler().isInDestructureAssignment(parent, parentStack)) {
+		return "write";
+	}
+	return "read";
 }
 
 /** `user-card` → `userCard` */

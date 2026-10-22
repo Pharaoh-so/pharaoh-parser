@@ -229,37 +229,56 @@ function addVueComponent(root, sfc, parsed) {
     const classComponent = parsed.exports.find((e) => e.isDefault && e.kind === "class")?.name;
     const componentName = classComponent ?? componentNameFromPath(parsed.path);
     const options = readOptionsApi(root);
-    const members = new Set();
     const runtimeRefs = [];
+    // What a template name reaches on the class. A class component's own
+    // methods first; Vue 3 then defines Options methods, then computed
+    // properties, so a computed wins over a method of the same name.
+    const members = new Map();
+    const methodTargets = new Map();
+    const computedTargets = new Map();
+    const taken = new Set(parsed.functions
+        .filter((f) => f.className === componentName)
+        .map((f) => f.name));
     for (const member of options?.members ?? []) {
-        const fn = extractOptionsMember(member, sfc.script.code, parsed.functions, componentName);
+        const fn = extractOptionsMember(member, uniqueName(member.name, taken), sfc.script.code, parsed.functions, componentName);
         if (!fn)
             continue;
-        if (member.reach === "member") {
-            members.add(member.name);
-        }
-        else {
+        taken.add(fn.name);
+        if (member.reach === "runtime") {
             runtimeRefs.push({
-                name: member.name,
+                name: fn.name,
                 kind: "runtime",
                 line: fn.lineStart,
                 className: componentName,
             });
         }
+        else if (member.role === "get" || member.role === "set") {
+            const accessors = computedTargets.get(member.key) ?? {};
+            if (member.role === "get")
+                accessors.read = fn.name;
+            else
+                accessors.write = fn.name;
+            computedTargets.set(member.key, accessors);
+        }
+        else {
+            methodTargets.set(member.key, { read: fn.name });
+        }
     }
     for (const { name, line, isMethod } of options?.watcherTargets ?? []) {
-        runtimeRefs.push({
-            name,
-            kind: "runtime",
-            line,
-            ...(isMethod ? { className: componentName } : {}),
-        });
+        runtimeRefs.push(isMethod
+            ? {
+                name: methodTargets.get(name)?.read ?? name,
+                kind: "runtime",
+                line,
+                className: componentName,
+            }
+            : { name, kind: "runtime", line });
     }
     if (classComponent) {
         for (const fn of parsed.functions) {
             if (fn.className !== classComponent)
                 continue;
-            members.add(fn.name);
+            members.set(fn.name, { read: fn.name });
             if (isClassComponentHook(fn.name, fn.decorators)) {
                 runtimeRefs.push({
                     name: fn.name,
@@ -297,36 +316,60 @@ function addVueComponent(root, sfc, parsed) {
             line: sfc.scriptSrc.line,
         });
     }
-    const templateRefs = [
-        ...readTemplateRefs(sfc.descriptor, {
-            setupBindings: sfc.hasScriptSetup ? readSetupBindings(root) : new Set(),
-            members,
-            aliases: options?.aliases ?? new Map(),
-            componentName,
-            components: options?.components ?? new Map(),
-            directives: options?.directives ?? new Map(),
-        }),
-        ...runtimeRefs,
-    ];
+    for (const [key, targets] of [...methodTargets, ...computedTargets]) {
+        members.set(key, targets);
+    }
+    const { refs, unverified } = readTemplateRefs(sfc.descriptor, {
+        setup: sfc.hasScriptSetup
+            ? readSetupBindings(root)
+            : { names: new Set(), namespaces: new Set() },
+        members,
+        aliases: options?.aliases ?? new Map(),
+        componentName,
+        components: options?.components ?? new Map(),
+        directives: options?.directives ?? new Map(),
+    });
+    const templateRefs = [...refs, ...runtimeRefs];
     if (templateRefs.length > 0)
         parsed.templateRefs = templateRefs;
+    if (unverified.length > 0)
+        parsed.unverifiedTemplateRefs = unverified;
+}
+/** `name`, or `name#2`, `name#3`... when the class already has a function by that name. */
+function uniqueName(name, taken) {
+    if (!taken.has(name))
+        return name;
+    let n = 2;
+    while (taken.has(`${name}#${n}`))
+        n++;
+    return `${name}#${n}`;
 }
 /**
  * Extract an Options API member holding a function (`save() {}`,
- * `save: function () {}`, `get() {}` of a computed, a function in a watcher
- * array) as a method of the component class. Returns undefined when its value
- * is not a function.
+ * `save: function () {}`, a computed's `get() {}`, a function in a watcher
+ * array) as a method of the component class, named `name`. Returns undefined
+ * when its value is not a function.
  */
-function extractOptionsMember(member, source, functions, className) {
-    const { name, node } = member;
-    if (node.type === "method_definition") {
-        return extractMethod(node, source, functions, className, undefined, name);
-    }
+function extractOptionsMember(member, name, source, functions, className) {
+    const { node, role } = member;
     const value = node.type === "pair" ? node.childForFieldName("value") : node;
-    if (!value || !FUNCTION_VALUE_TYPES.has(value.type))
+    const fnNode = node.type === "method_definition"
+        ? node
+        : value && FUNCTION_VALUE_TYPES.has(value.type)
+            ? value
+            : null;
+    if (!fnNode)
         return undefined;
-    return pushFunctionValue(node, name, value, source, functions, className, {
-        signature: buildSignature(value, source, name),
+    // An accessor or watcher reads as its role: `get total()`, `watch draft(value)`
+    const signature = buildSignature(fnNode, source, name, role ? "" : "function ");
+    if (node.type === "method_definition") {
+        const fn = extractMethod(node, source, functions, className, undefined, name);
+        if (fn)
+            fn.signature = signature;
+        return fn;
+    }
+    return pushFunctionValue(node, name, fnNode, source, functions, className, {
+        signature,
         decorators: [],
     });
 }
@@ -1119,8 +1162,9 @@ function extractDynamicImports(node, imports) {
 /**
  * `async function name(params): ReturnType`.
  * @param name - Overrides the node's own name (for a function held by an object key)
+ * @param keyword - What precedes the name: "function ", or "" when the name carries its role (`get total`)
  */
-function buildSignature(node, source, name = node.childForFieldName("name")?.text ?? "anonymous") {
+function buildSignature(node, source, name = node.childForFieldName("name")?.text ?? "anonymous", keyword = "function ") {
     const paramsNode = node.childForFieldName("parameters");
     const returnTypeNode = node.childForFieldName("return_type");
     const isAsync = source
@@ -1129,7 +1173,7 @@ function buildSignature(node, source, name = node.childForFieldName("name")?.tex
     let sig = "";
     if (isAsync)
         sig += "async ";
-    sig += `function ${name}`;
+    sig += `${keyword}${name}`;
     sig += paramsNode?.text ?? "()";
     if (returnTypeNode)
         sig += `: ${returnTypeNode.text.replace(/^:\s*/, "")}`;

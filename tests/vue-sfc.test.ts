@@ -228,10 +228,10 @@ describe("vue: Options API (JavaScript)", () => {
 		const legacy = "LegacyForm";
 		expect(functionSpans(parsed)).toEqual([
 			{ name: "data", lineStart: 18, lineEnd: 20, className: legacy },
-			{ name: "filtered", lineStart: 22, lineEnd: 24, className: legacy },
-			{ name: "isDirty", lineStart: 26, lineEnd: 28, className: legacy },
-			{ name: "isDirty", lineStart: 29, lineEnd: 31, className: legacy },
-			{ name: "draft", lineStart: 35, lineEnd: 37, className: legacy },
+			{ name: "get filtered", lineStart: 22, lineEnd: 24, className: legacy },
+			{ name: "get isDirty", lineStart: 26, lineEnd: 28, className: legacy },
+			{ name: "set isDirty", lineStart: 29, lineEnd: 31, className: legacy },
+			{ name: "watch draft", lineStart: 35, lineEnd: 37, className: legacy },
 			{ name: "mounted", lineStart: 39, lineEnd: 41, className: legacy },
 			{ name: "onSubmit", lineStart: 43, lineEnd: 45, className: legacy },
 			{ name: "addItem", lineStart: 46, lineEnd: 48, className: legacy },
@@ -247,6 +247,9 @@ describe("vue: Options API (JavaScript)", () => {
 		expect(byName("onSubmit")).toBe("function onSubmit()");
 		expect(byName("addItem")).toBe("function addItem(name)");
 		expect(byName("summary")).toBe("function summary(count)");
+		expect(byName("get filtered")).toBe("get filtered()");
+		expect(byName("set isDirty")).toBe("set isDirty(value)");
+		expect(byName("watch draft")).toBe("watch draft(value)");
 	});
 
 	it("records the component class with its members", () => {
@@ -258,9 +261,10 @@ describe("vue: Options API (JavaScript)", () => {
 		expect(component.isExported).toBe(true);
 		expect(component.methods).toEqual([
 			"data",
-			"filtered",
-			"isDirty",
-			"draft",
+			"get filtered",
+			"get isDirty",
+			"set isDirty",
+			"watch draft",
 			"mounted",
 			"onSubmit",
 			"addItem",
@@ -281,12 +285,12 @@ describe("vue: Options API (JavaScript)", () => {
 		expect(parsed.templateRefs).toEqual([
 			{ name: "onSubmit", kind: "event", line: 2, className: legacy },
 			{ name: "UserCard", kind: "component", line: 4 },
-			{ name: "filtered", kind: "directive", line: 4, className: legacy },
+			{ name: "get filtered", kind: "directive", line: 4, className: legacy },
 			{ name: "addItem", kind: "event", line: 5, className: legacy },
-			{ name: "isDirty", kind: "directive", line: 6, className: legacy },
+			{ name: "get isDirty", kind: "directive", line: 6, className: legacy },
 			{ name: "summary", kind: "interpolation", line: 6, className: legacy },
 			{ name: "data", kind: "runtime", line: 18, className: legacy },
-			{ name: "draft", kind: "runtime", line: 35, className: legacy },
+			{ name: "watch draft", kind: "runtime", line: 35, className: legacy },
 			{ name: "mounted", kind: "runtime", line: 39, className: legacy },
 		]);
 	});
@@ -507,21 +511,38 @@ describe("componentNameFromPath", () => {
 	});
 });
 
-describe("vue: templates the compiler can't read", () => {
-	it("lists every script name a Pug template could use", () => {
+describe("vue: templates the parser can't read", () => {
+	it("names a Pug template's candidates as unverified, not as references", () => {
 		const parsed = parseVue("src/PugTemplate.vue");
-		expect(parsed.templateRefs).toEqual([
-			{ name: "Child", kind: "template", line: 1 },
-			{ name: "label", kind: "template", line: 1 },
-			{ name: "save", kind: "template", line: 1 },
+		expect(parsed.templateRefs).toBeUndefined();
+		expect(parsed.unverifiedTemplateRefs).toEqual([
+			{
+				reason: "template-lang",
+				lang: "pug",
+				line: 1,
+				candidates: [{ name: "Child" }, { name: "label" }, { name: "save" }],
+			},
 		]);
 	});
 
-	it("lists every script name a <template src> could use", () => {
+	it("names a <template src> file and its candidates as unverified", () => {
 		const parsed = parseVue("src/ExternalTemplate.vue");
-		expect(parsed.templateRefs).toEqual([
-			{ name: "submit", kind: "template", line: 1 },
+		expect(parsed.templateRefs).toBeUndefined();
+		expect(parsed.unverifiedTemplateRefs).toEqual([
+			{
+				reason: "template-src",
+				src: "./form.html",
+				line: 1,
+				candidates: [{ name: "submit" }],
+			},
 		]);
+	});
+
+	it("leaves readable templates without unverified entries", () => {
+		expect(parseVue("src/UserList.vue").unverifiedTemplateRefs).toBeUndefined();
+		expect(
+			parseVue("src/LegacyForm.vue").unverifiedTemplateRefs,
+		).toBeUndefined();
 	});
 });
 
@@ -583,12 +604,101 @@ describe("vue: same-name shorthand (Vue 3.4)", () => {
 });
 
 describe("vue: expressions Babel can't read", () => {
-	it("neither throws nor drops names it can still find", () => {
+	it("does not throw, and names their candidates as unverified, not as references", () => {
 		const parsed = parseVue("src/OddExpressions.vue");
 		expect(parsed.functions.map((f) => f.name)).toEqual(["label"]);
 		expect(parsed.templateRefs).toEqual([
-			{ name: "label", kind: "bind", line: 3 },
 			{ name: "count", kind: "interpolation", line: 3 },
 		]);
+		expect(parsed.unverifiedTemplateRefs).toEqual([
+			// @click="/* ; */": the compiler's walker can't read it
+			{ reason: "unparsed-expression", kind: "event", line: 2, candidates: [] },
+			// :title="label // note": Babel can't parse it
+			{
+				reason: "unparsed-expression",
+				kind: "bind",
+				line: 3,
+				candidates: [{ name: "label" }],
+			},
+		]);
+	});
+});
+
+describe("vue: members that share a name keep their own identity", () => {
+	const parsed = parseVue("src/Collisions.vue");
+	const cls = "Collisions";
+
+	it("names computed accessors, watchers and colliding hooks apart from methods", () => {
+		expect(functionSpans(parsed)).toEqual([
+			{ name: "data", lineStart: 10, lineEnd: 12, className: cls },
+			{ name: "get total", lineStart: 15, lineEnd: 17, className: cls },
+			{ name: "set total", lineStart: 18, lineEnd: 20, className: cls },
+			{ name: "get label", lineStart: 22, lineEnd: 24, className: cls },
+			{ name: "watch total", lineStart: 27, lineEnd: 29, className: cls },
+			{ name: "watch refresh", lineStart: 30, lineEnd: 30, className: cls },
+			{ name: "watch count[0]", lineStart: 31, lineEnd: 31, className: cls },
+			{ name: "watch count[2]", lineStart: 31, lineEnd: 31, className: cls },
+			{ name: "refresh", lineStart: 34, lineEnd: 34, className: cls },
+			{ name: "label", lineStart: 35, lineEnd: 37, className: cls },
+			{ name: "mounted", lineStart: 38, lineEnd: 38, className: cls },
+			{ name: "mounted#2", lineStart: 40, lineEnd: 40, className: cls },
+		]);
+		const names = parsed.functions.map((f) => `${f.className}.${f.name}`);
+		expect(new Set(names).size).toBe(names.length);
+		expect(parsed.classes[0].methods).toEqual(
+			parsed.functions.map((f) => f.name),
+		);
+	});
+
+	it("reads through the getter and writes through the setter", () => {
+		expect(parsed.templateRefs).toEqual([
+			// v-model="total" reads and writes
+			{ name: "get total", kind: "directive", line: 2, className: cls },
+			{ name: "set total", kind: "directive", line: 2, className: cls },
+			{ name: "refresh", kind: "event", line: 2, className: cls },
+			{ name: "get total", kind: "interpolation", line: 3, className: cls },
+			// Vue 3 defines computed after methods: `label` is the computed
+			{ name: "get label", kind: "interpolation", line: 3, className: cls },
+			// total = 0 only writes
+			{ name: "set total", kind: "event", line: 4, className: cls },
+			// total += 1 reads and writes
+			{ name: "get total", kind: "event", line: 5, className: cls },
+			{ name: "set total", kind: "event", line: 5, className: cls },
+			{ name: "data", kind: "runtime", line: 10, className: cls },
+			{ name: "watch total", kind: "runtime", line: 27, className: cls },
+			{ name: "watch refresh", kind: "runtime", line: 30, className: cls },
+			{ name: "watch count[0]", kind: "runtime", line: 31, className: cls },
+			{ name: "watch count[2]", kind: "runtime", line: 31, className: cls },
+			{ name: "mounted#2", kind: "runtime", line: 40, className: cls },
+			// "refresh" in the count watcher array names the method
+			{ name: "refresh", kind: "runtime", line: 31, className: cls },
+		]);
+	});
+
+	it("does not reference the method a computed shadows, or the method named like a hook", () => {
+		const templateUses = (parsed.templateRefs ?? []).filter(
+			(r) => r.kind !== "runtime",
+		);
+		expect(templateUses.map((r) => r.name)).not.toContain("label");
+		expect(refNames(parsed)).not.toContain("mounted");
+	});
+});
+
+describe("vue: .bind, .call and .apply keep the function as the target", () => {
+	const parsed = parseVue("src/BindForms.vue");
+
+	it("references the handler, a namespace member, and nothing for locals or unknown names", () => {
+		expect(parsed.templateRefs).toEqual([
+			{ name: "handler", kind: "event", line: 2 },
+			{ name: "handler", kind: "event", line: 3 },
+			{ name: "handler", kind: "event", line: 4 },
+			// `api` is a namespace import: `call` is its member, not Function.prototype.call
+			{ name: "call", kind: "event", line: 5, receiver: "api" },
+			// line 6: `handler` is the v-for alias, so only `others` resolves
+			{ name: "others", kind: "directive", line: 6 },
+		]);
+		expect(
+			(parsed.templateRefs ?? []).filter((r) => r.name === "bind"),
+		).toEqual([]);
 	});
 });
