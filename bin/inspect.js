@@ -72,7 +72,7 @@ for (const file of walkedFiles) {
 }
 
 if (files.length === 0) {
-	console.error(`No TypeScript or Python files found in "${resolvedPath}".`);
+	console.error(`No TypeScript, Vue or Python files found in "${resolvedPath}".`);
 	process.exit(0);
 }
 

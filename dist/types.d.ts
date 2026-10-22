@@ -74,14 +74,40 @@ export interface ParsedConstant {
     lineStart: number;
     lineEnd: number;
 }
+/**
+ * A script name a Vue component's template uses (`@click="save"`,
+ * `<UserCard/>`, `{{ format(x) }}`), or an Options API member the Vue runtime
+ * calls itself. The template is the component's render function, so read each
+ * one as a call from the file's top level: without it, code used only from the
+ * template has no caller.
+ */
+export interface ParsedTemplateRef {
+    /** The name used: a script binding or import, the member after `receiver`, or a method of `className`. */
+    name: string;
+    /**
+     * Where it is used: a component tag, an event handler (`v-on`), a bound
+     * attribute (`v-bind`), an interpolation (`{{ }}`), another directive
+     * (`v-if`, `v-for`, `v-model`, `v-show`, a custom one), or "runtime" for an
+     * Options API member Vue calls itself (lifecycle hooks, watchers, `data()`).
+     */
+    kind: "component" | "event" | "bind" | "interpolation" | "directive" | "runtime";
+    /** 1-based line in the .vue file. */
+    line: number;
+    /** For `api.save()` or `<Form.Input>`: the script binding that `name` is a member of. */
+    receiver?: string;
+    /** Set when `name` is a method of the component class (Options API), as on ParsedFunction. */
+    className?: string;
+}
 export interface ParsedFile {
     path: string;
-    language: "typescript" | "tsx" | "python" | "javascript" | "jsx";
+    language: "typescript" | "tsx" | "python" | "javascript" | "jsx" | "vue";
     loc: number;
     functions: ParsedFunction[];
     classes: ParsedClass[];
     imports: ParsedImport[];
     exports: ParsedExport[];
     constants?: ParsedConstant[];
+    /** Vue only: script names the template uses (see ParsedTemplateRef). */
+    templateRefs?: ParsedTemplateRef[];
 }
 //# sourceMappingURL=types.d.ts.map

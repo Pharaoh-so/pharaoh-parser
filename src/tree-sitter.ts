@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import type { ScriptSource } from "./embedded-script.js";
 import {
 	type OnTree,
 	computeBodyHash as computeBodyHashShared,
@@ -12,8 +13,18 @@ import {
 	type ParsedFile,
 	type ParsedFunction,
 	type ParsedImport,
+	type ParsedTemplateRef,
 	computeClassMetrics,
 } from "./types.js";
+import {
+	type OptionsMember,
+	type VueSfc,
+	componentNameFromPath,
+	readOptionsApi,
+	readSetupBindings,
+	readTemplateRefs,
+	readVueSfc,
+} from "./vue-sfc.js";
 import {
 	Parser,
 	type SyntaxNode,
@@ -163,10 +174,12 @@ function extractConstants(rootNode: SyntaxNode): ParsedConstant[] {
 }
 
 /**
- * Parses a TypeScript or JavaScript file into its structural metadata.
+ * Parses a TypeScript, JavaScript or Vue (.vue) file into its structural metadata.
  * @param absolutePath - The file to read
  * @param relativePath - Its path in the repo, as recorded in the result
- * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @param onTree - Optional: also receives the syntax tree before it is freed.
+ *   For a .vue file it is the tree of toScriptSource's code, whose rows are
+ *   the .vue file's rows.
  * @returns The file's functions, classes, imports, exports and constants
  */
 export function parseFile(
@@ -175,7 +188,46 @@ export function parseFile(
 	onTree?: OnTree,
 ): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
-	const ext = relativePath.slice(relativePath.lastIndexOf("."));
+	const ext = extensionOf(relativePath);
+	if (ext === ".vue") return parseVue(source, relativePath, onTree);
+	return parseScript(source, relativePath, ext, onTree);
+}
+
+/**
+ * The code to parse for a file in place of its text, so a tree built
+ * elsewhere (like Pharaoh's call tracer's) matches the one parseFile reads:
+ * a .vue file's script blocks laid over blank text at their original
+ * positions, and any other file unchanged.
+ * @param relativePath - The file's path, whose extension says how to read it
+ * @param source - The file's text
+ * @returns The code, and the extension its script is written in (picks the grammar)
+ */
+export function toScriptSource(
+	relativePath: string,
+	source: string,
+): ScriptSource {
+	const ext = extensionOf(relativePath);
+	return ext === ".vue"
+		? readVueSfc(source, relativePath).script
+		: { code: source, ext };
+}
+
+function extensionOf(relativePath: string): string {
+	return relativePath.slice(relativePath.lastIndexOf("."));
+}
+
+/**
+ * Parses TypeScript or JavaScript source.
+ * @param ext - The script's extension, which picks the grammar and `language`
+ * @param extend - Adds to the result while the tree is alive, before onTree sees it
+ */
+function parseScript(
+	source: string,
+	relativePath: string,
+	ext: string,
+	onTree?: OnTree,
+	extend?: OnTree,
+): ParsedFile {
 	const parser = TS_ONLY_EXTENSIONS.has(ext) ? tsParser : tsxParser;
 	const tree = parser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
@@ -222,11 +274,148 @@ export function parseFile(
 			exports,
 			...(constants.length > 0 ? { constants } : {}),
 		};
+		extend?.(tree.rootNode, parsed);
 		onTree?.(tree.rootNode, parsed);
 		return parsed;
 	} finally {
 		tree.delete();
 	}
+}
+
+/**
+ * Parses a .vue file: its script blocks, read at their positions in the file
+ * (see toScriptSource), plus the component and what its template uses.
+ */
+function parseVue(
+	source: string,
+	relativePath: string,
+	onTree?: OnTree,
+): ParsedFile {
+	const sfc = readVueSfc(source, relativePath);
+	return parseScript(
+		sfc.script.code,
+		relativePath,
+		sfc.script.ext,
+		onTree,
+		(root, parsed) => addVueComponent(root, sfc, parsed),
+	);
+}
+
+/**
+ * Add what makes a parsed script a Vue component:
+ * - the component, as a default-exported class named after the file (a class
+ *   component, `export default class X extends Vue`, is already one), so a
+ *   parent's `import UserCard from "./UserCard.vue"` and `<UserCard/>` resolve
+ *   to it;
+ * - Options API members (methods, computed, watchers, hooks) as its methods;
+ * - `<script src>` as an import;
+ * - templateRefs: the script names the template uses, and the Options API
+ *   members the Vue runtime calls itself.
+ */
+function addVueComponent(
+	root: SyntaxNode,
+	sfc: VueSfc,
+	parsed: ParsedFile,
+): void {
+	parsed.language = "vue";
+	const classComponent = parsed.exports.find(
+		(e) => e.isDefault && e.kind === "class",
+	)?.name;
+	const componentName = classComponent ?? componentNameFromPath(parsed.path);
+
+	const options = readOptionsApi(root);
+	const members = new Set<string>();
+	const runtimeRefs: ParsedTemplateRef[] = [];
+	for (const member of options?.members ?? []) {
+		const fn = extractOptionsMember(
+			member,
+			sfc.script.code,
+			parsed.functions,
+			componentName,
+		);
+		if (!fn) continue;
+		if (member.reach === "member") {
+			members.add(member.name);
+		} else {
+			runtimeRefs.push({
+				name: member.name,
+				kind: "runtime",
+				line: fn.lineStart,
+				className: componentName,
+			});
+		}
+	}
+	for (const { name, line } of options?.watcherMethods ?? []) {
+		runtimeRefs.push({ name, kind: "runtime", line, className: componentName });
+	}
+
+	if (classComponent) {
+		for (const fn of parsed.functions) {
+			if (fn.className === classComponent) members.add(fn.name);
+		}
+	} else {
+		const methods = parsed.functions
+			.filter((f) => f.className === componentName)
+			.map((f) => f.name);
+		parsed.classes.push({
+			name: componentName,
+			lineStart: 1,
+			lineEnd: parsed.loc,
+			...computeClassMetrics(componentName, 1, parsed.loc, parsed.functions),
+			isExported: true,
+			methods: [...new Set(methods)],
+		});
+		// `export default { ... }` was recorded with the object's source as its name
+		parsed.exports = [
+			...parsed.exports.filter((e) => !e.isDefault),
+			{ name: componentName, kind: "class", isDefault: true },
+		];
+	}
+
+	if (sfc.scriptSrc) {
+		parsed.imports.push({
+			source: sfc.scriptSrc.source,
+			symbols: [],
+			isDefault: false,
+			isNamespace: false,
+			line: sfc.scriptSrc.line,
+		});
+	}
+
+	const templateRefs = [
+		...readTemplateRefs(sfc.descriptor, {
+			setupBindings: sfc.hasScriptSetup ? readSetupBindings(root) : new Set(),
+			members,
+			componentName,
+			components: options?.components ?? new Map(),
+			directives: options?.directives ?? new Map(),
+		}),
+		...runtimeRefs,
+	];
+	if (templateRefs.length > 0) parsed.templateRefs = templateRefs;
+}
+
+/**
+ * Extract an Options API member holding a function (`save() {}`,
+ * `save: function () {}`, `get() {}` of a computed) as a method of the
+ * component class. Returns undefined when its value is not a function.
+ */
+function extractOptionsMember(
+	member: OptionsMember,
+	source: string,
+	functions: ParsedFunction[],
+	className: string,
+): ParsedFunction | undefined {
+	const { name, node } = member;
+	if (node.type === "method_definition") {
+		return extractMethod(node, source, functions, className, undefined, name);
+	}
+	const value = node.type === "pair" ? node.childForFieldName("value") : null;
+	if (!value || !FUNCTION_VALUE_TYPES.has(value.type)) return undefined;
+	return pushFunctionValue(node, name, value, source, functions, className, {
+		signature: buildSignature(value, source, name),
+		decorators: [],
+	});
 }
 
 function extractFromNode(
@@ -471,8 +660,12 @@ function buildPropsMetadata(
 }
 
 /** Compute shared metadata fields for a function or method node. */
-function buildFunctionMetadata(node: SyntaxNode, source: string) {
-	const signature = buildSignature(node, source);
+function buildFunctionMetadata(
+	node: SyntaxNode,
+	source: string,
+	name?: string,
+) {
+	const signature = buildSignature(node, source, name);
 	const bodyHash = computeBodyHash(node);
 	const complexity = computeComplexity(node);
 	const paramCount = countParams(node);
@@ -534,26 +727,30 @@ function isDefaultExportDeclaration(node: SyntaxNode): boolean {
 	);
 }
 
+/**
+ * Extract a method as a function of `className`.
+ * @param name - Overrides the method's own name (a computed property's getter is named after the property)
+ */
 function extractMethod(
 	node: SyntaxNode,
 	source: string,
 	functions: ParsedFunction[],
 	className: string,
 	decorators?: string[],
-): void {
-	const nameNode = node.childForFieldName("name");
-	if (!nameNode) return;
+	name = node.childForFieldName("name")?.text,
+): ParsedFunction | undefined {
+	if (!name) return undefined;
 
-	const name = nameNode.text;
-
-	functions.push({
+	const fn: ParsedFunction = {
 		name,
-		...buildFunctionMetadata(node, source),
+		...buildFunctionMetadata(node, source, name),
 		...buildPropsMetadata(node),
 		isExported: false,
 		className,
 		...(decorators ? { decorators } : {}),
-	});
+	};
+	functions.push(fn);
+	return fn;
 }
 
 /** Value types that make a class field a method: `handle = async (req) => {...}`. */
@@ -602,23 +799,47 @@ function extractFieldFunction(
 		returnTypeNode ? `: ${returnTypeNode.text.replace(/^:\s*/, "")}` : ""
 	} => ...`;
 
-	functions.push({
+	pushFunctionValue(field, name, valueNode, source, functions, className, {
+		signature,
+		decorators,
+	});
+	return name;
+}
+
+/**
+ * Push a function held as a value (a class field's or an object member's) as
+ * a method of `className`. It spans from its holder (the field or pair, where
+ * a decorator or doc comment sits) to the end of the value.
+ */
+function pushFunctionValue(
+	holder: SyntaxNode,
+	name: string,
+	valueNode: SyntaxNode,
+	source: string,
+	functions: ParsedFunction[],
+	className: string,
+	{ signature, decorators }: { signature: string; decorators: string[] },
+): ParsedFunction {
+	const fn: ParsedFunction = {
 		name,
 		signature,
-		lineStart: field.startPosition.row + 1,
+		lineStart: holder.startPosition.row + 1,
 		lineEnd: valueNode.endPosition.row + 1,
-		loc: valueNode.endPosition.row - field.startPosition.row + 1,
+		loc: valueNode.endPosition.row - holder.startPosition.row + 1,
 		complexity: computeComplexity(valueNode),
 		isExported: false,
-		isAsync,
-		jsdoc: extractJSDoc(field),
+		isAsync: source
+			.slice(valueNode.startIndex, valueNode.endIndex)
+			.startsWith("async"),
+		jsdoc: extractJSDoc(holder),
 		bodyHash: computeBodyHash(valueNode),
 		paramCount: countParams(valueNode),
 		...buildPropsMetadata(valueNode),
 		className,
 		...(decorators.length > 0 ? { decorators } : {}),
-	});
-	return name;
+	};
+	functions.push(fn);
+	return fn;
 }
 
 function extractClass(
@@ -1158,8 +1379,15 @@ function extractDynamicImports(
 	}
 }
 
-function buildSignature(node: SyntaxNode, source: string): string {
-	const nameNode = node.childForFieldName("name");
+/**
+ * `async function name(params): ReturnType`.
+ * @param name - Overrides the node's own name (for a function held by an object key)
+ */
+function buildSignature(
+	node: SyntaxNode,
+	source: string,
+	name = node.childForFieldName("name")?.text ?? "anonymous",
+): string {
 	const paramsNode = node.childForFieldName("parameters");
 	const returnTypeNode = node.childForFieldName("return_type");
 	const isAsync = source
@@ -1168,7 +1396,7 @@ function buildSignature(node: SyntaxNode, source: string): string {
 
 	let sig = "";
 	if (isAsync) sig += "async ";
-	sig += `function ${nameNode?.text ?? "anonymous"}`;
+	sig += `function ${name}`;
 	sig += paramsNode?.text ?? "()";
 	if (returnTypeNode) sig += `: ${returnTypeNode.text.replace(/^:\s*/, "")}`;
 

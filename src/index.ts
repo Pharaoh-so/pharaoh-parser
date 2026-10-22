@@ -1,12 +1,16 @@
 /**
- * pharaoh-parser — Open-source AST parser for TypeScript and Python.
+ * pharaoh-parser — Open-source AST parser for TypeScript, Vue and Python.
  *
  * Extracts structural metadata (function names, signatures, imports, exports,
  * complexity scores) without capturing source code. This is the exact parser
  * used by Pharaoh (https://pharaoh.so) to build codebase knowledge graphs.
  */
 
-export { parseFile as parseTypeScriptFile } from "./tree-sitter.js";
+export {
+	parseFile as parseTypeScriptFile,
+	toScriptSource,
+} from "./tree-sitter.js";
+export type { ScriptSource } from "./embedded-script.js";
 export { parseFile as parsePythonFile } from "./python-tree-sitter.js";
 export { walkFiles, isTestFile, type WalkedFile } from "./file-walker.js";
 export { detectModules, type DetectedModule } from "./module-detector.js";
@@ -23,6 +27,7 @@ export {
 	type ParsedImport,
 	type ParsedExport,
 	type ParsedConstant,
+	type ParsedTemplateRef,
 } from "./types.js";
 export {
 	Parser,
