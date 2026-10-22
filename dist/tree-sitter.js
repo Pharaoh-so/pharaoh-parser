@@ -815,8 +815,8 @@ function extractVariableDeclaration(node, source, functions, exports) {
         if (!nameNode || !valueNode)
             continue;
         const isExported = node.parent?.type === "export_statement";
-        if (valueNode.type === "arrow_function") {
-            // Arrow functions assigned to const/let/var → treat as functions
+        if (FUNCTION_VALUE_TYPES.has(valueNode.type)) {
+            // Arrow functions and function expressions assigned to const/let/var → treat as functions
             const name = nameNode.text;
             const isAsync = source
                 .slice(valueNode.startIndex, valueNode.endIndex)
@@ -1185,14 +1185,17 @@ function buildArrowSignature(nameNode, arrowNode, source) {
     const isAsync = source
         .slice(arrowNode.startIndex, arrowNode.endIndex)
         .startsWith("async");
+    // `const f = function (a) {}` keeps its keyword: only an arrow gets `=> ...`.
+    const arrow = arrowNode.type === "arrow_function";
     let sig = "";
     if (isAsync)
         sig += "async ";
-    sig += `const ${nameNode.text} = `;
+    sig += `const ${nameNode.text} = ${arrow ? "" : "function "}`;
     sig += paramsNode?.text ?? "()";
     if (returnTypeNode)
         sig += `: ${returnTypeNode.text.replace(/^:\s*/, "")}`;
-    sig += " => ...";
+    if (arrow)
+        sig += " => ...";
     return sig;
 }
 function computeComplexity(node) {
