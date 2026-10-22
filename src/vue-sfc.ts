@@ -243,18 +243,24 @@ export interface OptionsMember {
 /** What a component's Options API object declares. */
 export interface OptionsApi {
 	members: OptionsMember[];
+	/** `methods: { formatDate, save: saveDraft }`: member name → the script function it is. */
+	aliases: Map<string, string>;
 	/** `components: { UserCard }`: registered name → script name. */
 	components: Map<string, string>;
 	/** `directives: { focus }`: registered name → script name. */
 	directives: Map<string, string>;
-	/** `watch: { x: "persist" }`: methods a watcher names, and the line naming each. */
-	watcherMethods: { name: string; line: number }[];
+	/**
+	 * What a watcher names instead of holding a function: a method
+	 * (`"persist"`, `isMethod`) or a script function (`logChange`).
+	 */
+	watcherTargets: { name: string; line: number; isMethod: boolean }[];
 }
 
 /**
  * Read the Options API object a component default-exports: `export default
- * { ... }`, or the object passed to `defineComponent(...)` / `Vue.extend(...)`.
- * @returns null when the script default-exports no object
+ * { ... }`, the object passed to `defineComponent(...)` / `Vue.extend(...)`,
+ * or a class component's `@Component({ ... })` options.
+ * @returns null when the script default-exports no such object
  */
 export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 	const object = defaultExportedObject(root);
@@ -262,20 +268,28 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 
 	const api: OptionsApi = {
 		members: [],
+		aliases: new Map(),
 		components: new Map(),
 		directives: new Map(),
-		watcherMethods: [],
+		watcherTargets: [],
 	};
 	for (const option of objectMembers(object)) {
 		const value = pairValue(option.node);
 		switch (option.name) {
 			case "methods":
 				for (const method of objectMembers(value)) {
-					api.members.push({ ...method, reach: "member" });
+					const target = identifierValue(method.node);
+					if (target) api.aliases.set(method.name, target);
+					else api.members.push({ ...method, reach: "member" });
 				}
 				break;
 			case "computed":
 				for (const computed of objectMembers(value)) {
+					const target = identifierValue(computed.node);
+					if (target) {
+						api.aliases.set(computed.name, target);
+						continue;
+					}
 					const accessors = objectMembers(pairValue(computed.node)).filter(
 						(m) => m.name === "get" || m.name === "set",
 					);
@@ -288,22 +302,7 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 				break;
 			case "watch":
 				for (const watcher of objectMembers(value)) {
-					const handler = pairValue(watcher.node);
-					if (handler?.type === "string") {
-						api.watcherMethods.push({
-							name: handler.text.slice(1, -1),
-							line: handler.startPosition.row + 1,
-						});
-						continue;
-					}
-					const inner = objectMembers(handler).find(
-						(m) => m.name === "handler",
-					);
-					api.members.push({
-						name: watcher.name,
-						node: inner?.node ?? watcher.node,
-						reach: "runtime",
-					});
+					readWatcher(api, watcher.name, watcher.node);
 				}
 				break;
 			case "components":
@@ -321,11 +320,57 @@ export function readOptionsApi(root: SyntaxNode): OptionsApi | null {
 	return api;
 }
 
-/** The object literal a script default-exports, directly or as the first argument of a call. */
+/**
+ * Read one watcher: `x(v) {}`, `x: function () {}`, `x: "persist"`,
+ * `x: logChange`, `x: { handler, immediate }` or an array of those.
+ */
+function readWatcher(api: OptionsApi, name: string, entry: SyntaxNode): void {
+	const value = entry.type === "pair" ? pairValue(entry) : entry;
+	const line = (value ?? entry).startPosition.row + 1;
+	switch (value?.type) {
+		case "string":
+			api.watcherTargets.push({
+				name: value.text.slice(1, -1),
+				line,
+				isMethod: true,
+			});
+			return;
+		case "identifier":
+		case "shorthand_property_identifier":
+			api.watcherTargets.push({ name: value.text, line, isMethod: false });
+			return;
+		case "array":
+			for (const element of value.namedChildren) {
+				readWatcher(api, name, element);
+			}
+			return;
+		case "object": {
+			const handler = objectMembers(value).find((m) => m.name === "handler");
+			if (handler) readWatcher(api, name, handler.node);
+			return;
+		}
+		default:
+			// A method, or a pair or array element holding a function
+			api.members.push({ name, node: entry, reach: "runtime" });
+	}
+}
+
+/**
+ * The options object a script default-exports: directly, as the first
+ * argument of a call, or as a class component's decorator argument
+ * (`@Component({ components })`).
+ */
 function defaultExportedObject(root: SyntaxNode): SyntaxNode | null {
 	for (const statement of root.namedChildren) {
 		if (statement.type !== "export_statement") continue;
 		if (!statement.children.some((c) => c.type === "default")) continue;
+		const declaration = statement.childForFieldName("declaration");
+		if (declaration?.type === "class_declaration") {
+			return decoratorOptions([
+				...statement.namedChildren,
+				...declaration.namedChildren,
+			]);
+		}
 		let value = statement.childForFieldName("value");
 		while (
 			value?.type === "as_expression" ||
@@ -374,9 +419,29 @@ function staticKey(key: SyntaxNode | null): string | null {
 	}
 }
 
+/** The object argument of the first decorator among `nodes` that has one. */
+function decoratorOptions(nodes: SyntaxNode[]): SyntaxNode | null {
+	for (const node of nodes) {
+		if (node.type !== "decorator") continue;
+		const call = node.namedChildren.find((c) => c.type === "call_expression");
+		const arg = call?.childForFieldName("arguments")?.namedChildren[0];
+		if (arg?.type === "object") return arg;
+	}
+	return null;
+}
+
 /** A pair's value; a method or shorthand property has none. */
 function pairValue(entry: SyntaxNode): SyntaxNode | null {
 	return entry.type === "pair" ? entry.childForFieldName("value") : null;
+}
+
+/** The script name an entry stands for: `{ formatDate }` or `{ save: saveDraft }`. */
+function identifierValue(entry: SyntaxNode): string | null {
+	const value = entry.type === "pair" ? pairValue(entry) : entry;
+	return value?.type === "identifier" ||
+		value?.type === "shorthand_property_identifier"
+		? value.text
+		: null;
 }
 
 /** `{ UserCard, "user-list": List }` → UserCard → UserCard, user-list → List. */
@@ -385,14 +450,48 @@ function readRegistry(
 	registry: Map<string, string>,
 ) {
 	for (const { name, node } of objectMembers(object)) {
-		const value = node.type === "pair" ? pairValue(node) : node;
-		if (
-			value?.type === "identifier" ||
-			value?.type === "shorthand_property_identifier"
-		) {
-			registry.set(name, value.text);
-		}
+		const target = identifierValue(node);
+		if (target) registry.set(name, target);
 	}
+}
+
+/** Class component methods Vue calls itself, by name. */
+const CLASS_COMPONENT_HOOKS = new Set([
+	"data",
+	"render",
+	"beforeCreate",
+	"created",
+	"beforeMount",
+	"mounted",
+	"beforeUpdate",
+	"updated",
+	"beforeUnmount",
+	"unmounted",
+	"beforeDestroy",
+	"destroyed",
+	"activated",
+	"deactivated",
+	"errorCaptured",
+	"renderTracked",
+	"renderTriggered",
+	"serverPrefetch",
+	"beforeRouteEnter",
+	"beforeRouteUpdate",
+	"beforeRouteLeave",
+]);
+
+/**
+ * Whether Vue calls a class component's method itself: a lifecycle hook, or
+ * a `@Watch(...)` handler (vue-property-decorator).
+ */
+export function isClassComponentHook(
+	name: string,
+	decorators: readonly string[] = [],
+): boolean {
+	return (
+		CLASS_COMPONENT_HOOKS.has(name) ||
+		decorators.some((d) => d.startsWith("@Watch("))
+	);
 }
 
 /** What a template's names can resolve to. */
@@ -401,6 +500,8 @@ export interface TemplateScope {
 	setupBindings: ReadonlySet<string>;
 	/** Methods and computed properties of the component class (Options API or class component). */
 	members: ReadonlySet<string>;
+	/** Options API members that stand for a script function (see OptionsApi.aliases). */
+	aliases: ReadonlyMap<string, string>;
 	/** The component class: members belong to it, and its file name refers to it. */
 	componentName: string;
 	/** Options API `components` registry. */
@@ -436,12 +537,22 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
  * A name counts only when it resolves to the script: template locals (`v-for`
  * aliases, slot props, handler parameters), props, `data()` keys and globals
  * like `$event` do not. Nothing of the template's text is kept but names.
+ *
+ * Where the template can't be read, it errs toward referencing: a template in
+ * another language or file (`lang="pug"`, `src`) lists every name it could
+ * use, and an expression Babel can't parse falls back to its identifiers.
+ * A missed reference would mark live code unused.
  */
 export function readTemplateRefs(
 	descriptor: SFCDescriptor,
 	scope: TemplateScope,
 ): ParsedTemplateRef[] {
-	const root = descriptor.template?.ast;
+	const template = descriptor.template;
+	if (!template) return [];
+	if (template.src || (template.lang && template.lang !== "html")) {
+		return unreadTemplateRefs(scope, template.loc.start.line);
+	}
+	const root = template.ast;
 	if (!root) return [];
 
 	const refs: ParsedTemplateRef[] = [];
@@ -468,6 +579,33 @@ export function readTemplateRefs(
 			);
 		} else if (scope.members.has(name)) {
 			add({ name, kind, line, className: scope.componentName });
+		} else {
+			const target = scope.aliases.get(name);
+			if (target) add({ name: target, kind, line });
+		}
+	};
+
+	/** Resolve a name unless the template declares it. */
+	const visitName = (
+		name: string,
+		kind: ParsedTemplateRef["kind"],
+		line: number,
+		locals: ReadonlySet<string>,
+	) => {
+		if (!locals.has(name)) resolve(name, kind, line);
+	};
+
+	/** Every identifier-like word, for an expression Babel can't parse. */
+	const scanNames = (
+		content: string,
+		kind: ParsedTemplateRef["kind"],
+		firstLine: number,
+		locals: ReadonlySet<string>,
+	) => {
+		for (const match of content.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/g)) {
+			const before = content.slice(0, match.index);
+			const line = firstLine + (before.match(/\n/g)?.length ?? 0);
+			visitName(match[0], kind, line, locals);
 		}
 	};
 
@@ -478,28 +616,36 @@ export function readTemplateRefs(
 	) => {
 		if (!exp || !("content" in exp) || exp.isStatic) return;
 		const { ast, content, loc } = exp;
-		if (ast === false) return; // Babel couldn't parse it
+		if (ast === false) {
+			// Babel couldn't parse it (`:x="a // note"`)
+			scanNames(content, kind, loc.start.line, locals);
+			return;
+		}
 		if (!ast) {
 			// A bare identifier (the compiler skips parsing those)
 			const name = content.trim();
-			if (IDENTIFIER.test(name) && !locals.has(name)) {
-				resolve(name, kind, loc.start.line);
-			}
+			if (IDENTIFIER.test(name)) visitName(name, kind, loc.start.line, locals);
 			return;
 		}
 		const knownIds: Record<string, number> = Object.create(null);
 		for (const local of locals) knownIds[local] = 1;
-		compiler().walkIdentifiers(
-			ast,
-			(id, parent) => {
-				// The compiler parses `(${content})`: lines count from the expression's start
-				const line = loc.start.line + (id.loc?.start.line ?? 1) - 1;
-				resolve(id.name, kind, line, memberName(id, parent));
-			},
-			false,
-			[],
-			knownIds,
-		);
+		try {
+			compiler().walkIdentifiers(
+				ast,
+				(id, parent) => {
+					// The compiler parses `(${content})`: lines count from the expression's start
+					const line = loc.start.line + (id.loc?.start.line ?? 1) - 1;
+					resolve(id.name, kind, line, memberName(id, parent));
+				},
+				false,
+				[],
+				knownIds,
+			);
+		} catch {
+			// The walker reads `body[0]` of a handler with `;` but no statement
+			// (`@click="/* ; */"`); one odd expression must not fail the file
+			scanNames(content, kind, loc.start.line, locals);
+		}
 	};
 
 	const visitTag = (element: ElementNode) => {
@@ -513,12 +659,7 @@ export function readTemplateRefs(
 			return;
 		}
 		// Vue matches a tag to a name as written, camelized, then capitalized
-		const camel = tag.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
-		const candidates = [
-			tag,
-			camel,
-			camel.charAt(0).toUpperCase() + camel.slice(1),
-		];
+		const candidates = [tag, camelize(tag), capitalize(camelize(tag))];
 		for (const candidate of candidates) {
 			const name = scope.setupBindings.has(candidate)
 				? candidate
@@ -535,12 +676,10 @@ export function readTemplateRefs(
 	};
 
 	const visitCustomDirective = (directive: DirectiveNode) => {
-		const camel = directive.name.replace(/-(\w)/g, (_, c: string) =>
-			c.toUpperCase(),
-		);
+		const camel = camelize(directive.name);
 		const line = directive.loc.start.line;
 		// <script setup>: `v-focus` is the binding `vFocus`
-		const setupName = `v${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
+		const setupName = `v${capitalize(camel)}`;
 		const name = scope.setupBindings.has(setupName)
 			? setupName
 			: (scope.directives.get(directive.name) ?? scope.directives.get(camel));
@@ -567,6 +706,22 @@ export function readTemplateRefs(
 			const kind = directiveKind(directive, element);
 			visitExpression(directive.arg, kind, locals);
 			visitExpression(directive.exp, kind, locals);
+			// Vue 3.4 same-name shorthand: `:on-save` binds `onSave`
+			const { arg } = directive;
+			if (
+				directive.name === "bind" &&
+				!directive.exp &&
+				arg &&
+				"content" in arg &&
+				arg.isStatic
+			) {
+				visitName(
+					camelize(arg.content),
+					kind,
+					directive.loc.start.line,
+					locals,
+				);
+			}
 		}
 		// Slot props cover the slot's content only
 		visitChildren(
@@ -590,6 +745,40 @@ export function readTemplateRefs(
 
 	visitChildren(root.children, new Set());
 	return refs;
+}
+
+/**
+ * For a template that can't be read: every name it could use, at the
+ * template's first line, so nothing it uses reads as unused.
+ */
+function unreadTemplateRefs(
+	scope: TemplateScope,
+	line: number,
+): ParsedTemplateRef[] {
+	const names = new Set([
+		...scope.setupBindings,
+		...scope.aliases.values(),
+		...scope.components.values(),
+		...scope.directives.values(),
+	]);
+	return [
+		...[...names].map((name) => ({ name, kind: "template" as const, line })),
+		...[...scope.members].map((name) => ({
+			name,
+			kind: "template" as const,
+			line,
+			className: scope.componentName,
+		})),
+	];
+}
+
+/** `user-card` → `userCard` */
+function camelize(name: string): string {
+	return name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+function capitalize(name: string): string {
+	return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function isElement(node: TemplateChild): node is ElementNode {

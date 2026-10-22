@@ -57,28 +57,42 @@ export interface OptionsMember {
 /** What a component's Options API object declares. */
 export interface OptionsApi {
     members: OptionsMember[];
+    /** `methods: { formatDate, save: saveDraft }`: member name → the script function it is. */
+    aliases: Map<string, string>;
     /** `components: { UserCard }`: registered name → script name. */
     components: Map<string, string>;
     /** `directives: { focus }`: registered name → script name. */
     directives: Map<string, string>;
-    /** `watch: { x: "persist" }`: methods a watcher names, and the line naming each. */
-    watcherMethods: {
+    /**
+     * What a watcher names instead of holding a function: a method
+     * (`"persist"`, `isMethod`) or a script function (`logChange`).
+     */
+    watcherTargets: {
         name: string;
         line: number;
+        isMethod: boolean;
     }[];
 }
 /**
  * Read the Options API object a component default-exports: `export default
- * { ... }`, or the object passed to `defineComponent(...)` / `Vue.extend(...)`.
- * @returns null when the script default-exports no object
+ * { ... }`, the object passed to `defineComponent(...)` / `Vue.extend(...)`,
+ * or a class component's `@Component({ ... })` options.
+ * @returns null when the script default-exports no such object
  */
 export declare function readOptionsApi(root: SyntaxNode): OptionsApi | null;
+/**
+ * Whether Vue calls a class component's method itself: a lifecycle hook, or
+ * a `@Watch(...)` handler (vue-property-decorator).
+ */
+export declare function isClassComponentHook(name: string, decorators?: readonly string[]): boolean;
 /** What a template's names can resolve to. */
 export interface TemplateScope {
     /** <script setup> bindings (see readSetupBindings); empty without <script setup>. */
     setupBindings: ReadonlySet<string>;
     /** Methods and computed properties of the component class (Options API or class component). */
     members: ReadonlySet<string>;
+    /** Options API members that stand for a script function (see OptionsApi.aliases). */
+    aliases: ReadonlyMap<string, string>;
     /** The component class: members belong to it, and its file name refers to it. */
     componentName: string;
     /** Options API `components` registry. */
@@ -91,6 +105,11 @@ export interface TemplateScope {
  * A name counts only when it resolves to the script: template locals (`v-for`
  * aliases, slot props, handler parameters), props, `data()` keys and globals
  * like `$event` do not. Nothing of the template's text is kept but names.
+ *
+ * Where the template can't be read, it errs toward referencing: a template in
+ * another language or file (`lang="pug"`, `src`) lists every name it could
+ * use, and an expression Babel can't parse falls back to its identifiers.
+ * A missed reference would mark live code unused.
  */
 export declare function readTemplateRefs(descriptor: SFCDescriptor, scope: TemplateScope): ParsedTemplateRef[];
 //# sourceMappingURL=vue-sfc.d.ts.map

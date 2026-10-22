@@ -506,3 +506,89 @@ describe("componentNameFromPath", () => {
 		expect(componentNameFromPath("src\\views\\home-page.vue")).toBe("HomePage");
 	});
 });
+
+describe("vue: templates the compiler can't read", () => {
+	it("lists every script name a Pug template could use", () => {
+		const parsed = parseVue("src/PugTemplate.vue");
+		expect(parsed.templateRefs).toEqual([
+			{ name: "Child", kind: "template", line: 1 },
+			{ name: "label", kind: "template", line: 1 },
+			{ name: "save", kind: "template", line: 1 },
+		]);
+	});
+
+	it("lists every script name a <template src> could use", () => {
+		const parsed = parseVue("src/ExternalTemplate.vue");
+		expect(parsed.templateRefs).toEqual([
+			{ name: "submit", kind: "template", line: 1 },
+		]);
+	});
+});
+
+describe("vue: Options API watchers and aliases", () => {
+	it("references methods a watcher names by string, in a handler object or an array", () => {
+		const parsed = parseVue("src/Watchers.vue");
+		const cls = "Watchers";
+		expect(parsed.templateRefs).toEqual([
+			{ name: "data", kind: "runtime", line: 9, className: cls },
+			{ name: "persist", kind: "runtime", line: 13, className: cls },
+			{ name: "persist", kind: "runtime", line: 14, className: cls },
+			{ name: "log", kind: "runtime", line: 14, className: cls },
+			{ name: "logChange", kind: "runtime", line: 14 },
+		]);
+	});
+
+	it("resolves methods that alias a script function (`{ formatDate }`, `save: saveDraft`)", () => {
+		const parsed = parseVue("src/OptionsAliases.vue");
+		expect(parsed.templateRefs).toEqual([
+			{ name: "saveDraft", kind: "event", line: 2 },
+			{ name: "formatDate", kind: "interpolation", line: 2 },
+			{ name: "data", kind: "runtime", line: 11, className: "OptionsAliases" },
+		]);
+	});
+});
+
+describe("vue: class components (vue-class-component)", () => {
+	const parsed = parseVue("src/ClassComponent.vue");
+
+	it("uses the default-exported class as the component", () => {
+		expect(parsed.classes.map((c) => c.name)).toEqual(["Counter"]);
+		expect(parsed.exports).toEqual([
+			{ name: "Counter", kind: "class", isDefault: true },
+		]);
+	});
+
+	it("reads @Component's registry, template uses, hooks and watchers", () => {
+		const cls = "Counter";
+		expect(parsed.templateRefs).toEqual([
+			{ name: "ChildPanel", kind: "component", line: 2 },
+			{ name: "total", kind: "bind", line: 2, className: cls },
+			{ name: "onChange", kind: "event", line: 2, className: cls },
+			{ name: "mounted", kind: "runtime", line: 17, className: cls },
+			{ name: "onCount", kind: "runtime", line: 22, className: cls },
+		]);
+		expect(refNames(parsed)).not.toContain("neverUsed");
+	});
+});
+
+describe("vue: same-name shorthand (Vue 3.4)", () => {
+	it("references the binding `:handler` and `:on-save` stand for", () => {
+		const parsed = parseVue("src/Shorthand.vue");
+		expect(parsed.templateRefs).toEqual([
+			{ name: "Child", kind: "component", line: 2 },
+			{ name: "handler", kind: "bind", line: 2 },
+			{ name: "onSave", kind: "bind", line: 2 },
+		]);
+	});
+});
+
+describe("vue: expressions Babel can't read", () => {
+	it("neither throws nor drops names it can still find", () => {
+		const parsed = parseVue("src/OddExpressions.vue");
+		expect(parsed.functions.map((f) => f.name)).toEqual(["label"]);
+		expect(parsed.templateRefs).toEqual([
+			{ name: "label", kind: "bind", line: 3 },
+			{ name: "count", kind: "interpolation", line: 3 },
+		]);
+	});
+});

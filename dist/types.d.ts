@@ -87,10 +87,12 @@ export interface ParsedTemplateRef {
     /**
      * Where it is used: a component tag, an event handler (`v-on`), a bound
      * attribute (`v-bind`), an interpolation (`{{ }}`), another directive
-     * (`v-if`, `v-for`, `v-model`, `v-show`, a custom one), or "runtime" for an
-     * Options API member Vue calls itself (lifecycle hooks, watchers, `data()`).
+     * (`v-if`, `v-for`, `v-model`, `v-show`, a custom one), "runtime" for a
+     * member Vue calls itself (lifecycle hooks, watchers, `data()`), or
+     * "template" for every name a template the parser can't read
+     * (`lang="pug"`, `src`) could use.
      */
-    kind: "component" | "event" | "bind" | "interpolation" | "directive" | "runtime";
+    kind: "component" | "event" | "bind" | "interpolation" | "directive" | "runtime" | "template";
     /** 1-based line in the .vue file. */
     line: number;
     /** For `api.save()` or `<Form.Input>`: the script binding that `name` is a member of. */

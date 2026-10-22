@@ -1,4 +1,4 @@
-# Vue single-file components (.vue) — Implementation Plan
+# Vue single-file components (.vue): Implementation Plan
 
 **Date:** 2026-10-22
 **Mode:** BIG CHANGE. Dan pre-approved the recommended option for every issue; each choice is recorded below and in the PR.
@@ -20,7 +20,7 @@ Script parsing alone is not enough. A method or component used only from the tem
 
 ## Decisions
 
-### Section 1 — Architecture
+### Section 1: Architecture
 
 **Issue 1. Where `.vue` dispatch lives.**
 - A (chosen): inside `tree-sitter.ts` `parseFile`. Pharaoh already sends every non-Python file there, so its pipeline needs no dispatch change.
@@ -52,7 +52,7 @@ Script parsing alone is not enough. A method or component used only from the tem
 - B: `@vue/compiler-dom` alone. It's lighter (21ms to load vs 65ms), but we would re-implement block splitting, `src` handling and duplicate-block rules.
 - C: regex. The brief rules this out.
 
-### Section 2 — Code quality
+### Section 2: Code quality
 
 **Issue 7. Sharing TS extraction.**
 - A (chosen): split `parseFile` into file reading plus `parseScript(source, path, ext, onTree, extend)`, used by both the TS and Vue paths. `extractFieldFunction` generalizes to take a name, so Options API pairs (`save: function () {}`) reuse it.
@@ -76,10 +76,21 @@ Script parsing alone is not enough. A method or component used only from the tem
 - Kebab-case tags; `<Foo.Bar>`; `<component :is>`; a component referencing itself by file name; custom directives (`v-focus` → `vFocus`).
 - Type-only imports (not exposed to templates); `v-for` and `v-slot` destructuring; inline arrow parameters; `$event`.
 - Props destructured from `defineProps` and the results of compiler macros (`defineProps`/`defineEmits`/`defineModel`/`defineSlots`/`withDefaults`), which are never references.
-- Options API registries (`components`, `directives`) and `watch: { x: 'methodName' }`.
-- Not handled (listed in the PR): non-HTML templates (Pug), `mixins`, and `setup()` return objects.
+- Options API registries (`components`, `directives`); watchers as a function, a method name, a script function, a `{ handler }` object or an array; members that alias a script function (`methods: { formatDate }`, `save: saveDraft`).
+- Class components (`vue-class-component`): the class is the component, `@Component({ ... })` options are read, and lifecycle hooks and `@Watch` handlers count as runtime-called.
+- Vue 3.4 same-name shorthand (`:on-save` binds `onSave`).
+- Not handled (listed in the PR): `mixins`, and `setup()` return objects.
 
-### Section 3 — Wiring
+**Issue 12 (from code review). What to do where the template can't be read.**
+A missed reference marks live code unused, so the parser errs toward referencing.
+- A (chosen):
+  - A template in another language or file (`lang="pug"`, `src`) lists every script name it could use, as kind `"template"`.
+  - An expression Babel can't parse (`:x="a // note"`) falls back to its identifiers.
+  - A walker failure (`@click="/* ; */"` threw and failed the whole file) falls back the same way.
+- B: emit nothing. Live functions read as unused, and one odd expression fails the file.
+- C: a `ParsedFile` flag telling Pharaoh to skip dead-code labels for the file. That is a new concept for the consumer to handle, where the refs above reuse the path it already needs.
+
+### Section 3: Wiring
 
 **Issue 11. Every export has a caller.**
 - `.vue` joins `SOURCE_EXTENSIONS`.
@@ -87,7 +98,7 @@ Script parsing alone is not enough. A method or component used only from the tem
 - `toScriptSource(path, source)` is new. It is what Pharaoh's small-repo tracer should parse in place of the raw file, and `parseFile` itself uses it.
 - `ParsedTemplateRef` is exported from `./types` and the package root.
 
-### Section 4 — Tests (written first)
+### Section 4: Tests (written first)
 
 Fixtures in `tests/fixtures/vue/src`, with hardcoded lines in every assertion:
 - `<script>` and `<script setup>` together (TS); JS `<script setup>`; Options API in JS and in TS (`defineComponent`); a file with no script.
@@ -96,14 +107,14 @@ Fixtures in `tests/fixtures/vue/src`, with hardcoded lines in every assertion:
 - Line mapping: functions, imports, constants and refs carry `.vue` lines, and the tree lent through `onTree` has `.vue` rows.
 - `walkFiles` lists `.vue` files; `toScriptSource`; and the compiler's parse cache is left empty.
 
-### Section 5 — Performance
+### Section 5: Performance
 
 - `@vue/compiler-sfc` loads lazily (65ms, once per process, only when a `.vue` file appears).
 - `sourceMap: false` (the default builds a source map per block).
 - compiler-sfc keeps an LRU of 500 descriptors, template ASTs included. Each file is parsed once, so it is cleared after every parse, keeping memory flat on large Vue repos.
 - One tree per file, freed in `finally` as today.
 
-### Section 6 — Security
+### Section 6: Security
 
 - Local parsing only; no new network surface.
 - `templateRefs` carry identifier names and line numbers, never template text or expressions.

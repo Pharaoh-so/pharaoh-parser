@@ -20,6 +20,7 @@ import {
 	type OptionsMember,
 	type VueSfc,
 	componentNameFromPath,
+	isClassComponentHook,
 	readOptionsApi,
 	readSetupBindings,
 	readTemplateRefs,
@@ -345,13 +346,27 @@ function addVueComponent(
 			});
 		}
 	}
-	for (const { name, line } of options?.watcherMethods ?? []) {
-		runtimeRefs.push({ name, kind: "runtime", line, className: componentName });
+	for (const { name, line, isMethod } of options?.watcherTargets ?? []) {
+		runtimeRefs.push({
+			name,
+			kind: "runtime",
+			line,
+			...(isMethod ? { className: componentName } : {}),
+		});
 	}
 
 	if (classComponent) {
 		for (const fn of parsed.functions) {
-			if (fn.className === classComponent) members.add(fn.name);
+			if (fn.className !== classComponent) continue;
+			members.add(fn.name);
+			if (isClassComponentHook(fn.name, fn.decorators)) {
+				runtimeRefs.push({
+					name: fn.name,
+					kind: "runtime",
+					line: fn.lineStart,
+					className: classComponent,
+				});
+			}
 		}
 	} else {
 		const methods = parsed.functions
@@ -386,6 +401,7 @@ function addVueComponent(
 		...readTemplateRefs(sfc.descriptor, {
 			setupBindings: sfc.hasScriptSetup ? readSetupBindings(root) : new Set(),
 			members,
+			aliases: options?.aliases ?? new Map(),
 			componentName,
 			components: options?.components ?? new Map(),
 			directives: options?.directives ?? new Map(),
@@ -397,8 +413,9 @@ function addVueComponent(
 
 /**
  * Extract an Options API member holding a function (`save() {}`,
- * `save: function () {}`, `get() {}` of a computed) as a method of the
- * component class. Returns undefined when its value is not a function.
+ * `save: function () {}`, `get() {}` of a computed, a function in a watcher
+ * array) as a method of the component class. Returns undefined when its value
+ * is not a function.
  */
 function extractOptionsMember(
 	member: OptionsMember,
@@ -410,7 +427,7 @@ function extractOptionsMember(
 	if (node.type === "method_definition") {
 		return extractMethod(node, source, functions, className, undefined, name);
 	}
-	const value = node.type === "pair" ? node.childForFieldName("value") : null;
+	const value = node.type === "pair" ? node.childForFieldName("value") : node;
 	if (!value || !FUNCTION_VALUE_TYPES.has(value.type)) return undefined;
 	return pushFunctionValue(node, name, value, source, functions, className, {
 		signature: buildSignature(value, source, name),
