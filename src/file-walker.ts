@@ -27,6 +27,7 @@ const SOURCE_EXTENSIONS = new Set([
 	".mjs",
 	".cjs",
 	".py",
+	".vue",
 ]);
 
 const JS_EXT = "(?:[cm]?[jt]sx?)";

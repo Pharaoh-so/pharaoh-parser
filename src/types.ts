@@ -88,13 +88,86 @@ export interface ParsedConstant {
 	lineEnd: number;
 }
 
+/**
+ * What a Vue template reference points at: a script binding or import
+ * (`name`), a member of one (`receiver.name`), or a function of the component
+ * class (`className.name`, as on ParsedFunction). For an Options API computed
+ * property `name` is its accessor: `get total` for a read, `set total` for a
+ * write.
+ */
+export interface ParsedRefTarget {
+	name: string;
+	/** For `api.save()` or `<Form.Input>`: the script binding `name` is a member of. */
+	receiver?: string;
+	/** Set when `name` is a function of the component class. */
+	className?: string;
+}
+
+/**
+ * A script name a Vue component's template uses (`@click="save"`,
+ * `<UserCard/>`, `{{ format(x) }}`), or a component function the Vue runtime
+ * calls itself. The template is the component's render function, so read each
+ * one as a call from the file's top level: without it, code used only from the
+ * template has no caller. Every entry was read from the template's AST.
+ */
+export interface ParsedTemplateRef extends ParsedRefTarget {
+	/**
+	 * Where it is used: a component tag, an event handler (`v-on`), a bound
+	 * attribute (`v-bind`), an interpolation (`{{ }}`), another directive
+	 * (`v-if`, `v-for`, `v-model`, `v-show`, a custom one), or "runtime" for a
+	 * component function Vue calls itself (lifecycle hooks, watchers, `data()`).
+	 */
+	kind:
+		| "component"
+		| "event"
+		| "bind"
+		| "interpolation"
+		| "directive"
+		| "runtime";
+	/** 1-based line in the .vue file. */
+	line: number;
+}
+
+/**
+ * Part of a Vue template the parser could not read, and the script names it
+ * may use. These are not references: draw no CALLS edge from them. A function
+ * named in `candidates` may still be used from the template, so don't report
+ * it Dead or unused on the strength of having no caller.
+ */
+export interface ParsedUnverifiedTemplateRefs {
+	/**
+	 * "template-lang": the template is written in another language (Pug);
+	 * "template-src": the template lives in another file;
+	 * "unparsed-expression": one template expression could not be parsed.
+	 */
+	reason: "template-lang" | "template-src" | "unparsed-expression";
+	/** 1-based line in the .vue file: the template's first line, or the expression's. */
+	line: number;
+	/** "template-lang": the template's `lang` (e.g. "pug"). */
+	lang?: string;
+	/** "template-src": the template file, as the `src` attribute names it. */
+	src?: string;
+	/** "unparsed-expression": where the expression sits, as on ParsedTemplateRef. */
+	kind?: ParsedTemplateRef["kind"];
+	/**
+	 * Script names it may use. For a whole template: everything a template can
+	 * reach. For an expression: the identifiers in its text that resolve to the
+	 * script. May be empty.
+	 */
+	candidates: ParsedRefTarget[];
+}
+
 export interface ParsedFile {
 	path: string;
-	language: "typescript" | "tsx" | "python" | "javascript" | "jsx";
+	language: "typescript" | "tsx" | "python" | "javascript" | "jsx" | "vue";
 	loc: number;
 	functions: ParsedFunction[];
 	classes: ParsedClass[];
 	imports: ParsedImport[];
 	exports: ParsedExport[];
 	constants?: ParsedConstant[];
+	/** Vue only: script names the template uses (see ParsedTemplateRef). */
+	templateRefs?: ParsedTemplateRef[];
+	/** Vue only: template parts the parser could not read (see ParsedUnverifiedTemplateRefs). */
+	unverifiedTemplateRefs?: ParsedUnverifiedTemplateRefs[];
 }

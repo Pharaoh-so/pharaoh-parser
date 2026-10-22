@@ -1,6 +1,6 @@
 # pharaoh-parser
 
-Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structural metadata from TypeScript and Python codebases.
+Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structural metadata from TypeScript, Vue and Python codebases.
 
 **This is the exact code that runs in production.** The main Pharaoh repository consumes this package as a dependency. You can audit every line to verify what Pharaoh extracts from your code.
 
@@ -20,6 +20,7 @@ Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structur
 | JSDoc/docstring summaries | First line, truncated to 200 chars |
 | Top-level constant values | `MAX_RETRIES = 3`, `API_BASE = "https://api.example.com"` (strings and numbers up to 128 characters) |
 | Decorators | `@Get("/users")`, `@app.route("/api")` |
+| Vue template references | `{ name: "save", kind: "event", line: 4 }` for `@click="save"` (names and lines only). Templates the parser can't read (Pug, `src`) are reported as unverified candidates, never as references |
 
 ## What it does NOT extract
 
@@ -28,6 +29,7 @@ Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structur
 - **Comments** — only JSDoc/docstring first-line summaries (see note below)
 - **Environment variables** — `.env` values are never read
 - **File contents** — only structural metadata is extracted
+- **Vue template text** — only the names a template uses from its script (`save`, `UserCard`) and their line numbers
 
 > **Note on JSDoc/docstrings:** The parser extracts the first line of JSDoc comments and Python docstrings (truncated to 200 characters) as function documentation. If your documentation contains sensitive information, the parser output will include it. This mirrors what any code review tool or IDE would show.
 
@@ -40,7 +42,7 @@ npm install
 node bin/inspect.js /path/to/your/repo
 ```
 
-Output: JSON to stdout showing all structural metadata for every TypeScript and Python file in the repository.
+Output: JSON to stdout showing all structural metadata for every TypeScript, Vue and Python file in the repository.
 
 ### Save to file
 
@@ -109,6 +111,7 @@ Learn more at [pharaoh.so](https://pharaoh.so).
 ## Supported languages
 
 - **TypeScript** (.ts, .tsx) via [tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript)
+- **Vue** single-file components (.vue): blocks and template via [@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc), `<script>` and `<script setup>` via tree-sitter-typescript at their line numbers in the .vue file. Composition API and Options API.
 - **Python** (.py) via [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 
 ## Dependencies
@@ -118,9 +121,10 @@ Learn more at [pharaoh.so](https://pharaoh.so).
 | `web-tree-sitter` | WASM-based parser runtime |
 | `tree-sitter-typescript` | TypeScript/TSX grammar |
 | `tree-sitter-python` | Python grammar |
+| `@vue/compiler-sfc` | Vue's own .vue parser: script blocks and the template AST (loaded only when a repo has .vue files) |
 | `ignore` | .gitignore pattern matching |
 
-Four dependencies. No network calls. No telemetry. Pure local computation.
+Five dependencies. No network calls. No telemetry. Pure local computation.
 
 ## Running tests
 
