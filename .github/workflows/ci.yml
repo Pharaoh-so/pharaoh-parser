@@ -34,3 +34,18 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: npm install
       - run: npm test
+
+  # Path separators and WASM loading only break on Windows, where people map
+  # repos locally.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      # LF checkouts, so fixtures parse as they do on Linux
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm test
