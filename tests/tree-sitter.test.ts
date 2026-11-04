@@ -401,7 +401,7 @@ describe("default-exported declarations", () => {
 });
 
 describe("function expressions held by variables", () => {
-	it("extracts `const f = function () {}` like an arrow, and nothing that only calls one", () => {
+	it("extracts direct function bindings without duplicate constants or destructuring patterns", () => {
 		// Breaks if a variable holding a function expression isn't a function: its
 		// calls go unattributed and its callers' edges have nowhere to land.
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "function-expressions-"));
@@ -420,6 +420,8 @@ describe("function expressions held by variables", () => {
 					"  var formatName = function (name) { return name; };",
 					"})(jQuery);",
 					"const handlers = register(function () {});",
+					"const { tag = 'fallback' } = function () {};",
+					"const limit = 5;",
 				].join("\n"),
 			);
 			const parsed = parseFile(file, "lib.js");
@@ -461,6 +463,10 @@ describe("function expressions held by variables", () => {
 				kind: "function",
 				isDefault: false,
 			});
+			expect(parsed.constants.map((constant) => constant.name)).toEqual([
+				"handlers",
+				"limit",
+			]);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

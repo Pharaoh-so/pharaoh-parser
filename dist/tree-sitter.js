@@ -60,8 +60,8 @@ function extractConstants(rootNode) {
             if (SECRET_NAME_SUFFIX.test(nameNode.text))
                 continue;
             const valueNode = declarator.childForFieldName("value");
-            // Skip arrow functions — already handled as ParsedFunction
-            if (valueNode?.type === "arrow_function")
+            // Function-valued bindings are already handled as ParsedFunction.
+            if (valueNode && FUNCTION_VALUE_TYPES.has(valueNode.type))
                 continue;
             // Extract scalar value
             // Unwrap `as const` / `satisfies Type` to reach the inner scalar
@@ -636,7 +636,7 @@ function extractMethod(node, source, functions, className, decorators, name = no
     functions.push(fn);
     return fn;
 }
-/** Value types that make a class field a method: `handle = async (req) => {...}`. */
+/** Syntax node types for functions assigned to bindings, fields, and properties. */
 const FUNCTION_VALUE_TYPES = new Set([
     "arrow_function",
     "function_expression",
@@ -815,8 +815,8 @@ function extractVariableDeclaration(node, source, functions, exports) {
         if (!nameNode || !valueNode)
             continue;
         const isExported = node.parent?.type === "export_statement";
-        if (FUNCTION_VALUE_TYPES.has(valueNode.type)) {
-            // Arrow functions and function expressions assigned to const/let/var → treat as functions
+        if (nameNode.type === "identifier" &&
+            FUNCTION_VALUE_TYPES.has(valueNode.type)) {
             const name = nameNode.text;
             const isAsync = source
                 .slice(valueNode.startIndex, valueNode.endIndex)
@@ -841,7 +841,7 @@ function extractVariableDeclaration(node, source, functions, exports) {
             }
         }
         else if (isExported) {
-            // Exported non-arrow-function variables (e.g., `export const foo = new Foo()`)
+            // Exported variables (e.g., `export const foo = new Foo()`)
             // Record in exports so downstream consumers (auto-vision, search) can see them.
             const name = nameNode.text;
             exports.push({
