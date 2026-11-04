@@ -71,7 +71,12 @@ function walkDir(dir, repoRoot, ig, results) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
         const absolutePath = path.join(dir, entry.name);
-        const relativePath = path.relative(repoRoot, absolutePath);
+        // Windows separators would miss the test-file patterns and every import
+        // that resolves to this file downstream.
+        const relativePath = path
+            .relative(repoRoot, absolutePath)
+            .split(path.sep)
+            .join("/");
         // Check ignore before recursing
         if (ig.ignores(relativePath)) {
             continue;

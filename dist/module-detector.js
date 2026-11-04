@@ -12,7 +12,8 @@ export function detectModules(files, _repoName, repoRoot) {
         ? detectWorkspacePackages(repoRoot)
         : new Set();
     for (const file of files) {
-        const parts = file.path.split(path.sep);
+        // Either separator: walkFiles records "/", other callers may pass native paths
+        const parts = file.path.split(/[\\/]/);
         let moduleName;
         let modulePath;
         // Check if file belongs to a workspace package (monorepo)
