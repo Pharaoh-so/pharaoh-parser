@@ -4,13 +4,12 @@ import { dirname } from "node:path";
 import { Language, Parser } from "web-tree-sitter";
 const require = createRequire(import.meta.url);
 // Resolve WASM paths via require.resolve — works in pnpm virtual store + Docker
-// web-tree-sitter has strict ESM exports, so resolve main entry + dirname
+// web-tree-sitter has strict ESM exports, so resolve main entry + dirname.
+// dirname, not stripping "/package.json": Windows paths end in "\package.json".
 const wasmDir = dirname(require.resolve("web-tree-sitter"));
 // biome-ignore format: keep on one line so knip detects the dependency
-const tsDir = require.resolve("tree-sitter-typescript/package.json").replace(/\/package\.json$/, "");
-const pyDir = require
-    .resolve("tree-sitter-python/package.json")
-    .replace(/\/package\.json$/, "");
+const tsDir = dirname(require.resolve("tree-sitter-typescript/package.json"));
+const pyDir = dirname(require.resolve("tree-sitter-python/package.json"));
 // Validate WASM files exist before attempting to load — fail fast with clear diagnostics
 const requiredWasm = [
     [`${wasmDir}/web-tree-sitter.wasm`, "web-tree-sitter"],

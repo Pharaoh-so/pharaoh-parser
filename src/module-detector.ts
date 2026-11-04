@@ -28,7 +28,8 @@ export function detectModules(
 		: new Set<string>();
 
 	for (const file of files) {
-		const parts = file.path.split(path.sep);
+		// Either separator: walkFiles records "/", other callers may pass native paths
+		const parts = file.path.split(/[\\/]/);
 
 		let moduleName: string;
 		let modulePath: string;

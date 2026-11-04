@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { walkFiles } from "../src/file-walker.js";
+import { isTestFile, walkFiles } from "../src/file-walker.js";
 import { detectModules } from "../src/module-detector.js";
 import { parseFile } from "../src/tree-sitter.js";
 
@@ -228,6 +228,33 @@ describe("file-walker", () => {
 
 		expect(files.length).toBe(4);
 		expect(files.every((f) => f.relativePath.endsWith(".ts"))).toBe(true);
+	});
+
+	it("records forward-slash paths on every OS", () => {
+		// Breaks on Windows (the windows CI job) if relativePath keeps native
+		// separators: a file under __tests__/ stops counting as a test, and no
+		// import downstream resolves to "src\engine\physics.ts".
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "walk-sep-"));
+		try {
+			for (const file of [
+				"src/engine/physics.ts",
+				"src/__tests__/helpers.ts",
+			]) {
+				fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+				fs.writeFileSync(path.join(dir, file), "export const x = 1;\n");
+			}
+
+			const files = walkFiles(dir)
+				.map((f) => f.relativePath)
+				.sort();
+			expect(files).toEqual([
+				"src/__tests__/helpers.ts",
+				"src/engine/physics.ts",
+			]);
+			expect(files.filter(isTestFile)).toEqual(["src/__tests__/helpers.ts"]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 	it("walks .mts and .cts files and parses them as TypeScript", () => {
 		// Breaks if the walker drops ES/CommonJS-module TypeScript again: a
