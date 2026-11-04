@@ -51,9 +51,9 @@ function findNamed(
 describe("vue: file walking", () => {
 	it("walkFiles lists .vue files", () => {
 		const paths = walkFiles(VUE_DIR).map((f) => f.relativePath);
-		expect(paths).toContain(path.join("src", "UserList.vue"));
-		expect(paths).toContain(path.join("src", "components", "UserCard.vue"));
-		expect(paths).toContain(path.join("src", "TemplateOnly.vue"));
+		expect(paths).toContain("src/UserList.vue");
+		expect(paths).toContain("src/components/UserCard.vue");
+		expect(paths).toContain("src/TemplateOnly.vue");
 	});
 });
 
