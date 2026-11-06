@@ -10,7 +10,9 @@ const require = createRequire(import.meta.url);
 // web-tree-sitter has strict ESM exports, so resolve main entry + dirname.
 // dirname, not stripping "/package.json": Windows paths end in "\package.json".
 const wasmDir = dirname(require.resolve("web-tree-sitter"));
+const jsDir = dirname(require.resolve("tree-sitter-typescript/package.json"));
 const pyDir = dirname(require.resolve("tree-sitter-python/package.json"));
+const jsWasm = `${jsDir}/tree-sitter-tsx.wasm`;
 const tsWasm = fileURLToPath(
 	new URL("../grammars/tree-sitter-typescript.wasm", import.meta.url),
 );
@@ -23,6 +25,7 @@ const requiredWasm: [string, string][] = [
 	[`${wasmDir}/web-tree-sitter.wasm`, "web-tree-sitter"],
 	[tsWasm, "tree-sitter-typescript"],
 	[tsxWasm, "tree-sitter-typescript (tsx)"],
+	[jsWasm, "tree-sitter-typescript (JavaScript compatibility)"],
 	[`${pyDir}/tree-sitter-python.wasm`, "tree-sitter-python"],
 ];
 for (const [path, label] of requiredWasm) {
@@ -43,6 +46,7 @@ try {
 
 export const tsLanguage = await Language.load(tsWasm);
 export const tsxLanguage = await Language.load(tsxWasm);
+export const jsLanguage = await Language.load(jsWasm);
 export const pyLanguage = await Language.load(
 	`${pyDir}/tree-sitter-python.wasm`,
 );

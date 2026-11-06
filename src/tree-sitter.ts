@@ -30,6 +30,7 @@ import {
 import {
 	Parser,
 	type SyntaxNode,
+	jsLanguage,
 	tsLanguage,
 	tsxLanguage,
 } from "./wasm-init.js";
@@ -39,6 +40,9 @@ tsParser.setLanguage(tsLanguage);
 
 const tsxParser = new Parser();
 tsxParser.setLanguage(tsxLanguage);
+
+const jsParser = new Parser();
+jsParser.setLanguage(jsLanguage);
 
 // Complexity-contributing node types
 const COMPLEXITY_TYPES = new Set([
@@ -59,9 +63,7 @@ const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
 /**
  * File extensions read with the plain TypeScript grammar. Only TypeScript's
  * own extensions can't hold JSX, and the TSX grammar would misread their
- * `<T>x` casts. Everything else can (.tsx, .jsx, and .js like Create React
- * App's App.js), so it gets the TSX grammar, which reads plain JavaScript the
- * same.
+ * `<T>x` casts.
  */
 const TS_ONLY_EXTENSIONS = new Set([".ts", ".mts", ".cts"]);
 
@@ -230,7 +232,13 @@ function parseScript(
 	onTree?: OnTree,
 	extend?: OnTree,
 ): ParsedFile {
-	const parser = TS_ONLY_EXTENSIONS.has(ext) ? tsParser : tsxParser;
+	const isJs = JS_EXTENSIONS.has(ext);
+	// Keep JavaScript on the upstream grammar so comparisons stay comparisons.
+	const parser = isJs
+		? jsParser
+		: TS_ONLY_EXTENSIONS.has(ext)
+			? tsParser
+			: tsxParser;
 	const tree = parser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
 
@@ -258,7 +266,6 @@ function parseScript(
 		const constants = extractConstants(tree.rootNode);
 
 		// Determine language from extension
-		const isJs = JS_EXTENSIONS.has(ext);
 		let language: ParsedFile["language"];
 		if (isJs) {
 			language = ext === ".jsx" ? "jsx" : "javascript";

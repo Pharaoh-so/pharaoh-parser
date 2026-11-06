@@ -15,9 +15,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Verify generated TypeScript grammars when inputs or assets change
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if ! git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- grammars/ scripts/rebuild-typescript-grammars.sh .github/workflows/ci.yml; then
+            ./scripts/rebuild-typescript-grammars.sh --check
+          fi
       - run: npm install
       - run: npm run build
       - run: npm run lint

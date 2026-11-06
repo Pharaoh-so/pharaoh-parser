@@ -63,6 +63,51 @@ describe.each([
 		expect(result.imports.map((item) => item.source)).toEqual(["./runtime"]);
 	});
 
+	it("keeps complete call chains inside await and operators outside typed tags", () => {
+		const precedence = fileURLToPath(
+			new URL("fixtures/typescript-grammar/precedence.ts", import.meta.url),
+		);
+		parseFile(precedence, `precedence.${extension}`, (root) => {
+			expect(root.hasError).toBe(false);
+			const bodies = root
+				.descendantsOfType("arrow_function")
+				.map((arrow) => arrow.childForFieldName("body"));
+			expect(bodies.map((body) => body?.type)).toEqual([
+				"await_expression",
+				"await_expression",
+				"await_expression",
+			]);
+			expect(bodies.map((body) => body?.firstNamedChild?.text)).toEqual([
+				"fetch().json()",
+				"f()()",
+				'load<typeof import("./types")>().json()',
+			]);
+
+			const [constructed] = root.descendantsOfType("new_expression");
+			expect(constructed.childForFieldName("constructor")?.text).toBe(
+				"Factory",
+			);
+			expect(constructed.childForFieldName("type_arguments")?.text).toBe(
+				"<Row>",
+			);
+			expect(constructed.childForFieldName("arguments")?.text).toBe("()");
+
+			const [addition] = root.descendantsOfType("binary_expression");
+			const [negation] = root.descendantsOfType("unary_expression");
+			const tags = [
+				addition.childForFieldName("right"),
+				negation.childForFieldName("argument"),
+			];
+			for (const tag of tags) {
+				expect(tag?.type).toBe("call_expression");
+				expect(tag?.childForFieldName("function")?.text).toBe("tag");
+				expect(tag?.childForFieldName("arguments")?.type).toBe(
+					"template_string",
+				);
+			}
+		});
+	});
+
 	it("reports genuinely malformed TypeScript", () => {
 		const parser = new Parser();
 		parser.setLanguage(language);
@@ -75,3 +120,24 @@ describe.each([
 		}
 	});
 });
+
+it.each(["js", "jsx", "mjs", "cjs"])(
+	"parses a comparison ending in a template in .%s",
+	(extension) => {
+		const comparison = fileURLToPath(
+			new URL("fixtures/typescript-grammar/comparison.js", import.meta.url),
+		);
+		parseFile(comparison, `comparison.${extension}`, (root) => {
+			expect(root.hasError).toBe(false);
+			const [expression] = root.descendantsOfType("binary_expression");
+			expect(expression.childForFieldName("operator")?.text).toBe(">");
+			expect(expression.childForFieldName("left")?.type).toBe(
+				"binary_expression",
+			);
+			expect(expression.childForFieldName("right")?.type).toBe(
+				"template_string",
+			);
+			expect(root.descendantsOfType("call_expression")).toHaveLength(0);
+		});
+	},
+);
