@@ -2,11 +2,13 @@ import fs from "node:fs";
 import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { componentNameFromPath, isClassComponentHook, readOptionsApi, readSetupBindings, readTemplateRefs, readVueSfc, } from "./vue-sfc.js";
-import { Parser, tsLanguage, tsxLanguage, } from "./wasm-init.js";
+import { Parser, jsLanguage, tsLanguage, tsxLanguage, } from "./wasm-init.js";
 const tsParser = new Parser();
 tsParser.setLanguage(tsLanguage);
 const tsxParser = new Parser();
 tsxParser.setLanguage(tsxLanguage);
+const jsParser = new Parser();
+jsParser.setLanguage(jsLanguage);
 // Complexity-contributing node types
 const COMPLEXITY_TYPES = new Set([
     "if_statement",
@@ -24,9 +26,7 @@ const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
 /**
  * File extensions read with the plain TypeScript grammar. Only TypeScript's
  * own extensions can't hold JSX, and the TSX grammar would misread their
- * `<T>x` casts. Everything else can (.tsx, .jsx, and .js like Create React
- * App's App.js), so it gets the TSX grammar, which reads plain JavaScript the
- * same.
+ * `<T>x` casts.
  */
 const TS_ONLY_EXTENSIONS = new Set([".ts", ".mts", ".cts"]);
 /** File extensions treated as JavaScript (`language`). */
@@ -162,7 +162,13 @@ function extensionOf(relativePath) {
  * @param extend - Adds to the result while the tree is alive, before onTree sees it
  */
 function parseScript(source, relativePath, ext, onTree, extend) {
-    const parser = TS_ONLY_EXTENSIONS.has(ext) ? tsParser : tsxParser;
+    const isJs = JS_EXTENSIONS.has(ext);
+    // Keep JavaScript on the upstream grammar so comparisons stay comparisons.
+    const parser = isJs
+        ? jsParser
+        : TS_ONLY_EXTENSIONS.has(ext)
+            ? tsParser
+            : tsxParser;
     const tree = parser.parse(source);
     if (!tree)
         throw new Error(`Failed to parse ${relativePath}`);
@@ -179,7 +185,6 @@ function parseScript(source, relativePath, ext, onTree, extend) {
         // Extract top-level constants (separate pass — only program scope)
         const constants = extractConstants(tree.rootNode);
         // Determine language from extension
-        const isJs = JS_EXTENSIONS.has(ext);
         let language;
         if (isJs) {
             language = ext === ".jsx" ? "jsx" : "javascript";

@@ -1,0 +1,79 @@
+diff --git a/common/define-grammar.js b/common/define-grammar.js
+index efb0b76..e17a3b2 100644
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -16,6 +16,7 @@ module.exports = function defineGrammar(dialect) {
+
+     precedences: ($, previous) => previous.concat([
+       [
++        'typed_call',
+         'call',
+         'instantiation',
+         'unary',
+@@ -63,7 +64,6 @@ module.exports = function defineGrammar(dialect) {
+       [$.decorator_call_expression, $.decorator],
+       [$.literal_type, $.pattern],
+       [$.predefined_type, $.pattern],
+-      [$.call_expression, $._type_query_call_expression],
+       [$.call_expression, $._type_query_call_expression_in_type_annotation],
+       [$.new_expression, $.primary_expression],
+       [$.meta_property, $.primary_expression],
+@@ -71,10 +71,12 @@ module.exports = function defineGrammar(dialect) {
+     ]),
+
+     conflicts: ($, previous) => previous.concat([
+-      [$.call_expression, $.instantiation_expression, $.binary_expression],
+-      [$.call_expression, $.instantiation_expression, $.binary_expression, $.unary_expression],
+-      [$.call_expression, $.instantiation_expression, $.binary_expression, $.update_expression],
+-      [$.call_expression, $.instantiation_expression, $.binary_expression, $.await_expression],
++      // A '<' after a callee can start a comparison or a type argument list.
++      [$.expression, $.call_expression],
++      [$.call_expression, $.new_expression],
++      [$.await_expression, $.binary_expression, $.instantiation_expression],
++      // A call after typeof can be a type argument or part of a comparison.
++      [$.call_expression, $._type_query_call_expression],
+
+       // This appears to be necessary to parse a parenthesized class expression
+       [$.class],
+@@ -173,9 +175,15 @@ module.exports = function defineGrammar(dialect) {
+       call_expression: $ => choice(
+         prec('call', seq(
+           field('function', choice($.expression, $.import)),
+-          field('type_arguments', optional($.type_arguments)),
+           field('arguments', $.arguments),
+         )),
++        // Prefer a direct typed call over calling an instantiation expression.
++        // A primary callee keeps surrounding operators outside the call.
++        prec.dynamic(1, prec('typed_call', seq(
++          field('function', choice($.primary_expression, $.new_expression, $.import)),
++          field('type_arguments', $.type_arguments),
++          field('arguments', choice($.arguments, $.template_string)),
++        ))),
+         prec('template_call', seq(
+           field('function', choice($.primary_expression, $.new_expression)),
+           field('arguments', $.template_string),
+@@ -192,7 +200,8 @@ module.exports = function defineGrammar(dialect) {
+         'new',
+         field('constructor', $.primary_expression),
+         field('type_arguments', optional($.type_arguments)),
+-        field('arguments', optional($.arguments)),
++        // Keep the argument list with the constructor when both parses work.
++        field('arguments', optional(prec.dynamic(2, $.arguments))),
+       )),
+
+       assignment_expression: $ => prec.right('assign', seq(
+@@ -1055,7 +1064,13 @@ module.exports = function defineGrammar(dialect) {
+         )),
+       ),
+
+-      array_type: $ => seq($.primary_type, '[', ']'),
++      array_type: $ => seq(
++        choice(
++          $.primary_type,
++          prec(-1, alias($._type_query_member_expression_in_type_annotation, $.member_expression)),
++        ),
++        '[', ']',
++      ),
+       tuple_type: $ => seq(
+         '[', commaSep($._tuple_type_member), optional(','), ']',
+       ),

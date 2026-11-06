@@ -52,6 +52,7 @@
 		"src/",
 		"dist/",
 		"bin/",
+		"grammars/",
 		"LICENSE",
 		"README.md"
 	],
@@ -66,7 +67,7 @@
 		"@vue/compiler-sfc": "^3.5.43",
 		"ignore": "^7.0.5",
 		"tree-sitter-python": "^0.25.0",
-		"tree-sitter-typescript": "^0.23.2",
+		"tree-sitter-typescript": "0.23.2",
 		"tsx": "^4.19.0",
 		"web-tree-sitter": "^0.26.5"
 	},
