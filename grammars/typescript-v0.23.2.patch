@@ -1,0 +1,71 @@
+diff --git a/common/define-grammar.js b/common/define-grammar.js
+index efb0b76..f454ca0 100644
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -16,6 +16,7 @@ module.exports = function defineGrammar(dialect) {
+
+     precedences: ($, previous) => previous.concat([
+       [
++        'template_call',
+         'call',
+         'instantiation',
+         'unary',
+@@ -63,7 +64,6 @@ module.exports = function defineGrammar(dialect) {
+       [$.decorator_call_expression, $.decorator],
+       [$.literal_type, $.pattern],
+       [$.predefined_type, $.pattern],
+-      [$.call_expression, $._type_query_call_expression],
+       [$.call_expression, $._type_query_call_expression_in_type_annotation],
+       [$.new_expression, $.primary_expression],
+       [$.meta_property, $.primary_expression],
+@@ -71,6 +71,9 @@ module.exports = function defineGrammar(dialect) {
+     ]),
+
+     conflicts: ($, previous) => previous.concat([
++      [$.primary_expression, $.await_expression],
++      // A call after typeof can be a type argument or part of a comparison.
++      [$.call_expression, $._type_query_call_expression],
+       [$.call_expression, $.instantiation_expression, $.binary_expression],
+       [$.call_expression, $.instantiation_expression, $.binary_expression, $.unary_expression],
+       [$.call_expression, $.instantiation_expression, $.binary_expression, $.update_expression],
+@@ -176,6 +179,12 @@ module.exports = function defineGrammar(dialect) {
+           field('type_arguments', optional($.type_arguments)),
+           field('arguments', $.arguments),
+         )),
++        // Share the typed call prefix until the template or argument list.
++        prec('template_call', seq(
++          field('function', $.expression),
++          field('type_arguments', $.type_arguments),
++          field('arguments', $.template_string),
++        )),
+         prec('template_call', seq(
+           field('function', choice($.primary_expression, $.new_expression)),
+           field('arguments', $.template_string),
+@@ -188,6 +197,12 @@ module.exports = function defineGrammar(dialect) {
+         )),
+       ),
+
++      // Prefer awaiting a complete call over treating await as the callee.
++      await_expression: ($, previous) => choice(
++        previous,
++        prec.dynamic(1, prec('unary_void', seq('await', $.call_expression))),
++      ),
++
+       new_expression: $ => prec.right('new', seq(
+         'new',
+         field('constructor', $.primary_expression),
+@@ -1055,7 +1070,13 @@ module.exports = function defineGrammar(dialect) {
+         )),
+       ),
+
+-      array_type: $ => seq($.primary_type, '[', ']'),
++      array_type: $ => seq(
++        choice(
++          $.primary_type,
++          prec(-1, alias($._type_query_member_expression_in_type_annotation, $.member_expression)),
++        ),
++        '[', ']',
++      ),
+       tuple_type: $ => seq(
+         '[', commaSep($._tuple_type_member), optional(','), ']',
+       ),

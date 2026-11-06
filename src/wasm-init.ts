@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Language, type Node, Parser } from "web-tree-sitter";
 
 const require = createRequire(import.meta.url);
@@ -9,15 +10,19 @@ const require = createRequire(import.meta.url);
 // web-tree-sitter has strict ESM exports, so resolve main entry + dirname.
 // dirname, not stripping "/package.json": Windows paths end in "\package.json".
 const wasmDir = dirname(require.resolve("web-tree-sitter"));
-// biome-ignore format: keep on one line so knip detects the dependency
-const tsDir = dirname(require.resolve("tree-sitter-typescript/package.json"));
 const pyDir = dirname(require.resolve("tree-sitter-python/package.json"));
+const tsWasm = fileURLToPath(
+	new URL("../grammars/tree-sitter-typescript.wasm", import.meta.url),
+);
+const tsxWasm = fileURLToPath(
+	new URL("../grammars/tree-sitter-tsx.wasm", import.meta.url),
+);
 
 // Validate WASM files exist before attempting to load — fail fast with clear diagnostics
 const requiredWasm: [string, string][] = [
 	[`${wasmDir}/web-tree-sitter.wasm`, "web-tree-sitter"],
-	[`${tsDir}/tree-sitter-typescript.wasm`, "tree-sitter-typescript"],
-	[`${tsDir}/tree-sitter-tsx.wasm`, "tree-sitter-typescript (tsx)"],
+	[tsWasm, "tree-sitter-typescript"],
+	[tsxWasm, "tree-sitter-typescript (tsx)"],
 	[`${pyDir}/tree-sitter-python.wasm`, "tree-sitter-python"],
 ];
 for (const [path, label] of requiredWasm) {
@@ -36,10 +41,8 @@ try {
 	);
 }
 
-export const tsLanguage = await Language.load(
-	`${tsDir}/tree-sitter-typescript.wasm`,
-);
-export const tsxLanguage = await Language.load(`${tsDir}/tree-sitter-tsx.wasm`);
+export const tsLanguage = await Language.load(tsWasm);
+export const tsxLanguage = await Language.load(tsxWasm);
 export const pyLanguage = await Language.load(
 	`${pyDir}/tree-sitter-python.wasm`,
 );
