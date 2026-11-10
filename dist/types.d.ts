@@ -152,7 +152,9 @@ export interface ParsedFile {
      * read again with macros blanked and one branch of each conditional (see
      * c-cpp-macros.ts), and this is what that read found. It rests on guesses
      * about what macros expand to: a consumer must treat a call or reference
-     * read from it as a candidate, never as exact.
+     * read from it as a candidate, never as exact, and expect some to be
+     * missing (the blanked branches' code is not in the tree onTree receives,
+     * and that tree's `hasError` can be false). Check `recovered || hasError`.
      */
     recovered?: boolean;
 }

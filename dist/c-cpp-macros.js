@@ -224,8 +224,10 @@ const TYPE_MACRO = /^(\s*(?:(?:typedef|const|static|extern|volatile)\s+)*[A-Za-z
  */
 function blankTypeMacroArgs(text, chars, from, to) {
     const match = TYPE_MACRO.exec(text.slice(from, to));
-    if (!match)
+    // `if (!p) p = q;` is a statement, not a type
+    if (!match || CONTROL_WORDS.has(match[1].trim().split(/\s+/).at(-1) ?? "")) {
         return;
+    }
     const start = from + match[0].length - match[2].length;
     blank(chars, start, start + match[2].length);
 }
@@ -410,6 +412,8 @@ function blankNames(text, chars, from, to, wanted) {
             (before === "," || before === "<") &&
             (after === ">" || after === ",") &&
             end - start >= SFINAE_PARAMETER.length &&
+            // The replacement must not cover a line break: lines keep their numbers
+            !/[\r\n]/.test(text.slice(start, start + SFINAE_PARAMETER.length)) &&
             TEMPLATE_HEAD.test(text.slice(Math.max(0, start - MAX_ARGS_SPAN), start))) {
             blank(chars, start, end);
             chars.splice(start, SFINAE_PARAMETER.length, ...SFINAE_PARAMETER);
@@ -463,10 +467,11 @@ export function firstBranches(text, dialect) {
         const c = condition.trim();
         if (keyword === "if" && /^0\b/.test(c))
             return true;
-        const cplusplus = /^__cplusplus\b/.test(c) || /^defined\s*\(?\s*__cplusplus\b/.test(c);
+        // `__cplusplus`, `defined(__cplusplus)`, and either negated with `!`
+        const cplusplus = /^(!\s*)?(?:defined\s*\(?\s*)?__cplusplus\b/.exec(c);
         if (!cplusplus)
             return false;
-        const positive = keyword === "ifdef" || keyword === "if";
+        const positive = (keyword === "ifdef" || keyword === "if") && cplusplus[1] === undefined;
         return dialect === "c" ? positive : !positive;
     };
     for (let row = 0; row < starts.length - 1; row++) {

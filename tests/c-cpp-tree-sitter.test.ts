@@ -179,6 +179,52 @@ describe("C and C++ parser", () => {
 		expect(unrecovered.recovered).toBeUndefined();
 	});
 
+	it("keeps what the rewrite blanked away: #else definitions, prototypes, methods, constants", () => {
+		let hasError = true;
+		const parsed = parse("branches.cpp", (root) => {
+			hasError = root.hasError;
+		});
+		// `run`'s braces split across branches: only one branch per #if reads
+		expect(hasError).toBe(false);
+		expect(parsed.recovered).toBe(true);
+		expect(functionsOf(parsed).map((f) => [f[0], f[2], f[3]])).toEqual([
+			["Port::handle", "6-6", 1],
+			["Port::fd", "8-8", 1],
+			["win_only", "14-14", 1],
+			["posix_only", "17-17", 1],
+			["run", "20-29", 2],
+		]);
+		expect(
+			parsed.classes.map((c) => [c.name, c.methods, c.complexity]),
+		).toEqual([["Port", ["handle", "fd"], 2]]);
+		// The #else prototype is an export though nothing defines it here
+		expect(parsed.exports.map((e) => `${e.kind} ${e.name}`).sort()).toEqual([
+			"class Port",
+			"function posix_api",
+			"function posix_only",
+			"function run",
+			"function win_only",
+			"function windows_api",
+		]);
+		expect(parsed.constants?.map((c) => c.name)).toEqual(["LIMIT"]);
+	});
+
+	it("reads through a macro another file of the repo defines, only when told about it", () => {
+		const header = fs.readFileSync(path.join(DIR, "export.h"), "utf-8");
+		const names = (opts: Parameters<typeof parseFile>[3]) =>
+			parseFile(
+				path.join(DIR, "widget.cpp"),
+				"widget.cpp",
+				undefined,
+				opts,
+			).functions.map((f) => `${f.className}::${f.name}`);
+		// `class lib_export Widget`: lower case, so no generic rule blanks it
+		expect(names({})).toEqual([]);
+		expect(names({ repoMacros: collectAttributeMacros([header]) })).toEqual([
+			"Widget::size",
+		]);
+	});
+
 	it("bounds what recovery spends on a file full of errors, keeping the best partial read", () => {
 		// The budget is text reparsed, so it binds the time whatever the machine
 		expect(
@@ -186,6 +232,18 @@ describe("C and C++ parser", () => {
 				recoveryReparses(n),
 			),
 		).toEqual([40, 10, 1, 0, 0]);
+		const dir0 = fs.mkdtempSync(path.join(os.tmpdir(), "cpp-norewrite-"));
+		try {
+			// No macro and no conditional: nothing to rewrite, the read as written stands
+			fs.writeFileSync(path.join(dir0, "plain.c"), "int broken( {\n");
+			let plainError = false;
+			const plain = parseFile(path.join(dir0, "plain.c"), "plain.c", (root) => {
+				plainError = root.hasError;
+			});
+			expect([plainError, plain.recovered]).toEqual([true, undefined]);
+		} finally {
+			fs.rmSync(dir0, { recursive: true, force: true });
+		}
 		// 300 KB built to exhaust it: every line in error, and each rewrite reads a
 		// little more without ever reading all of it
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cpp-budget-"));
@@ -247,6 +305,27 @@ describe("C and C++ parser", () => {
 				new Set(["redisAtomic"]),
 			),
 		).toBe(`static ${" ".repeat(11)} int n;`);
+		// One-line statements are not types or attributes: left as they are
+		const statements =
+			"if (!p) p = q;\nfor (;;) x = 1;\nif (done) return;\nwhile (n) n--;";
+		expect(blankMacros(statements, [0, 1, 2, 3])).toBe(statements);
+		// Lines keep their numbers: arguments over two lines, a short SFINAE name, CRLF
+		for (const multi of [
+			"template <typename T, ENABLE_IF(a &&\n b)> void g();\nint x;",
+			"template <typename T, API(\n x)> void g();",
+			"LUAI_FUNC void f(void);\r\nint y;",
+		]) {
+			const out = blankMacros(multi, [0, 1]);
+			expect([
+				out.length,
+				out.split("\n").length,
+				out.split("\r").length,
+			]).toEqual([
+				multi.length,
+				multi.split("\n").length,
+				multi.split("\r").length,
+			]);
+		}
 		// Only the rows asked for, and only known annotations when asked for those
 		expect(blankMacros(text, [1, 5])).toBe(
 			text.replace("GUARDED_BY(mu)", " ".repeat(14)),
@@ -336,13 +415,16 @@ describe("C and C++ parser", () => {
 			files.map((f) => f.relativePath).sort();
 		expect(names(walkFiles(DIR))).toEqual([]);
 		expect(names(walkFiles(DIR, { cpp: true }))).toEqual([
+			"branches.cpp",
 			"edge.cpp",
+			"export.h",
 			"macro.c",
 			"recovery.cpp",
 			"shape.cpp",
 			"shape.h",
 			"util.c",
 			"util.h",
+			"widget.cpp",
 		]);
 		expect(
 			["src/shape_test.cc", "src/test_util.c", "src/io_unittest.cpp"].map(

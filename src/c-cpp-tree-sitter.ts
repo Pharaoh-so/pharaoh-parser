@@ -4,10 +4,15 @@
  * (plus the few declarator forms it leaves out), then read into the same
  * ParsedFile shape as every other language.
  *
- * The grammars parse the text as written: nothing is preprocessed, so both
- * branches of an `#if` are read and a macro call is an ordinary call. A file
- * the grammar could not fully read still returns what it found; the tree's
- * `hasError` (see onTree) says so.
+ * Nothing is preprocessed. A file is read as written, both branches of every
+ * `#if` included and a macro call an ordinary call. When the grammar can't
+ * read it all, the file is read again through rewrites that blank macros and
+ * all but one branch of each conditional (see recover and c-cpp-macros.ts),
+ * and the result is marked `recovered`. onTree then receives the rewritten
+ * tree: it can have `hasError` false, has no directives and none of the
+ * blanked branches' code, so calls (and definitions) can be missing as well as
+ * inexact. Check `parsed.recovered || root.hasError`, not `hasError` alone,
+ * before trusting what a tree says.
  *
  * The grammars load when this module is first imported, not with the rest of
  * the parser: only callers that map C or C++ pay for them.
@@ -214,9 +219,15 @@ function read(
 	const classNodes: SyntaxNode[] = [];
 	const seen = new Set<number>();
 	const exported = new Set<string>();
-	const exportOnce = (name: string, kind: ParsedExport["kind"]): void => {
+	const exportLines = new Map<string, number>();
+	const exportOnce = (
+		name: string,
+		kind: ParsedExport["kind"],
+		node: SyntaxNode,
+	): void => {
 		if (exported.has(`${kind}:${name}`)) return;
 		exported.add(`${kind}:${name}`);
+		exportLines.set(`${kind}:${name}`, node.startPosition.row + 1);
 		exports.push({ name, kind, isDefault: false });
 	};
 
@@ -249,7 +260,7 @@ function read(
 			const prototype =
 				owner.type === "declaration" || owner.type === "field_declaration";
 			if (prototype && !className && isExported) {
-				exportOnce(declared.name, "function");
+				exportOnce(declared.name, "function", owner);
 			}
 			continue;
 		}
@@ -279,7 +290,7 @@ function read(
 			// `f(void)` takes nothing
 			paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
 		});
-		if (!className && isExported) exportOnce(declared.name, "function");
+		if (!className && isExported) exportOnce(declared.name, "function", owner);
 	}
 
 	for (const node of classNodes) {
@@ -299,7 +310,7 @@ function read(
 			...(base ? { extends: base } : {}),
 			...(otherBases.length > 0 ? { implements: otherBases } : {}),
 		});
-		if (isExported) exportOnce(name, "class");
+		if (isExported) exportOnce(name, "class", node);
 	}
 
 	const parsed: ParsedFile = {
@@ -312,8 +323,12 @@ function read(
 		exports,
 		constants: scalarMacros(root),
 	};
+	EXPORT_LINES.set(parsed, exportLines);
 	return parsed;
 }
+
+/** The line each export of a read was declared at, for merge (ParsedExport has none). */
+const EXPORT_LINES = new WeakMap<ParsedFile, Map<string, number>>();
 
 /**
  * Parses a C or C++ file into its structural metadata.
@@ -604,28 +619,42 @@ function merge(
 		!errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);
 	const extraFns = written.functions.filter(keep);
 	const extraClasses = written.classes.filter(keep);
-	// An export the rewrite lost is kept only with the definition it names
-	const kept = new Set([
-		...extraFns.filter((f) => !f.className).map((f) => `function:${f.name}`),
-		...extraClasses.map((c) => `class:${c.name}`),
-	]);
+	const byLine = <T extends { lineStart: number }>(a: T, b: T) =>
+		a.lineStart - b.lineStart;
+	const functions = [...rewritten.functions, ...extraFns].sort(byLine);
+	// A class both reads found keeps the methods of every branch, and its
+	// complexity counts the restored ones
+	const classes = [...rewritten.classes, ...extraClasses]
+		.sort(byLine)
+		.map((c) => {
+			const same = written.classes.find(
+				(w) => w.name === c.name && w.lineStart === c.lineStart,
+			);
+			const methods = [...new Set([...c.methods, ...(same?.methods ?? [])])];
+			return {
+				...c,
+				...computeClassMetrics(c.name, c.lineStart, c.lineEnd, functions),
+				methods,
+			};
+		});
+	// An export (a prototype too) the rewrite blanked away is kept, by its line
+	const writtenLines = EXPORT_LINES.get(written);
 	const haveExports = new Set(
 		rewritten.exports.map((e) => `${e.kind}:${e.name}`),
 	);
-	const byLine = <T extends { lineStart: number }>(a: T, b: T) =>
-		a.lineStart - b.lineStart;
+	const restoredExports = written.exports.filter((e) => {
+		const line = writtenLines?.get(`${e.kind}:${e.name}`);
+		return (
+			line !== undefined &&
+			!haveExports.has(`${e.kind}:${e.name}`) &&
+			keep({ lineStart: line, lineEnd: line })
+		);
+	});
 	return {
 		...rewritten,
-		functions: [...rewritten.functions, ...extraFns].sort(byLine),
-		classes: [...rewritten.classes, ...extraClasses].sort(byLine),
-		exports: [
-			...rewritten.exports,
-			...written.exports.filter(
-				(e) =>
-					kept.has(`${e.kind}:${e.name}`) &&
-					!haveExports.has(`${e.kind}:${e.name}`),
-			),
-		],
+		functions,
+		classes,
+		exports: [...rewritten.exports, ...restoredExports],
 		imports: written.imports,
 		constants: written.constants,
 		recovered: true,
