@@ -6,6 +6,7 @@ class LIB_EXPORT Widget {
  public:
   LIB_CONSTEXPR int size() const { return size_; }
   void Lock() EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  bool empty() const { return size_ == 0; }
 
  private:
   int size_ GUARDED_BY(mu_);

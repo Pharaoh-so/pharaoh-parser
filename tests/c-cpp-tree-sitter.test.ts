@@ -148,11 +148,13 @@ describe("C and C++ parser", () => {
 		});
 		expect(hasError).toBe(false);
 		expect(cpp.recovered).toBe(true);
-		// Lines are the file's as written; signatures read without the macros
+		// Lines are the file's as written; signatures read without the macros. The
+		// read as written took `empty` for a free function: only the method is kept.
 		expect(functionsOf(cpp)).toEqual([
 			["Widget::size", "int size() const", "7-7", 1, 0, true],
-			["twice", "auto twice(T value) -> T", "15-18", 2, 1, true],
-			["connect", "int connect(int fd)", "20-29", 2, 1, true],
+			["Widget::empty", "bool empty() const", "9-9", 1, 0, true],
+			["twice", "auto twice(T value) -> T", "16-19", 2, 1, true],
+			["connect", "int connect(int fd)", "21-30", 2, 1, true],
 		]);
 		expect(
 			cpp.classes.map((c) => [
@@ -160,7 +162,7 @@ describe("C and C++ parser", () => {
 				`${c.lineStart}-${c.lineEnd}`,
 				c.methods,
 			]),
-		).toEqual([["Widget", "5-12", ["size", "Lock"]]]);
+		).toEqual([["Widget", "5-13", ["size", "Lock", "empty"]]]);
 		expect(cpp.imports.map((i) => i.source)).toEqual(["recovery.h"]);
 		// A file the grammar reads as written is not marked
 		expect(parse("shape.cpp").recovered).toBeUndefined();

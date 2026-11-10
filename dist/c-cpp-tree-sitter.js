@@ -295,7 +295,7 @@ export function parseFile(absolutePath, relativePath, onTree, options = {}) {
             onTree?.(tree.rootNode, parsed);
             return parsed;
         }
-        const merged = merge(parsed, read(rewritten.tree.rootNode, rewritten.text, relativePath, language), errorSpans(tree.rootNode));
+        const merged = merge(parsed, read(rewritten.tree.rootNode, rewritten.text, relativePath, language), errorSpans(tree.rootNode), rewritten.text);
         onTree?.(rewritten.tree.rootNode, merged);
         return merged;
     }
@@ -473,22 +473,25 @@ function recover(root, source, language, { repoMacros, recoveryBytes = RECOVERY_
     }
 }
 /**
- * The facts of a rewritten read, plus what the read as written found outside
- * its error regions that the rewrite lost (a function in an `#else` branch the
- * rewrite blanked). Includes and constants come from the text as written.
+ * The facts of a rewritten read, plus what the read as written found in text
+ * the rewrite blanked (a function in an `#else` branch), outside its error
+ * regions. Includes and constants come from the text as written.
  *
  * @param written - The read of the file as written
  * @param rewritten - The read of the best rewrite
  * @param errors - One-based line spans of the errors in the read as written
+ * @param rewrittenText - The rewritten text the second read parsed
  */
-function merge(written, rewritten, errors) {
-    const sound = (item) => !errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);
-    const fnKey = (f) => `${f.className ?? ""}::${f.name}@${f.lineStart}`;
-    const classKey = (c) => `${c.name}@${c.lineStart}`;
-    const haveFns = new Set(rewritten.functions.map(fnKey));
-    const haveClasses = new Set(rewritten.classes.map(classKey));
-    const extraFns = written.functions.filter((f) => !haveFns.has(fnKey(f)) && sound(f));
-    const extraClasses = written.classes.filter((c) => !haveClasses.has(classKey(c)) && sound(c));
+function merge(written, rewritten, errors, rewrittenText) {
+    // Kept from the read as written: only what the rewrite blanked away (an
+    // `#else` branch), outside that read's errors. Where the text is still there,
+    // the rewritten read is the one that understood it: a class head the read as
+    // written missed turned its methods into free functions.
+    const rewrittenLines = rewrittenText.split("\n");
+    const keep = (item) => (rewrittenLines[item.lineStart - 1] ?? "").trim() === "" &&
+        !errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);
+    const extraFns = written.functions.filter(keep);
+    const extraClasses = written.classes.filter(keep);
     // An export the rewrite lost is kept only with the definition it names
     const kept = new Set([
         ...extraFns.filter((f) => !f.className).map((f) => `function:${f.name}`),
