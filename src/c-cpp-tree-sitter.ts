@@ -614,8 +614,14 @@ function merge(
 	// the rewritten read is the one that understood it: a class head the read as
 	// written missed turned its methods into free functions.
 	const rewrittenLines = rewrittenText.split("\n");
+	// Every line blank, not just the first: a macro alone on the line above a
+	// method (`FMT_CONSTEXPR20` / `int f() {`) is blanked too, and the method below
+	// it is in the rewritten read already. The cost: an `#else` head sharing the
+	// first branch's body (`void f() {` / `#else` / `void g() {`) isn't listed.
 	const keep = (item: { lineStart: number; lineEnd: number }): boolean =>
-		(rewrittenLines[item.lineStart - 1] ?? "").trim() === "" &&
+		rewrittenLines
+			.slice(item.lineStart - 1, item.lineEnd)
+			.every((line) => line.trim() === "") &&
 		!errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);
 	const extraFns = written.functions.filter(keep);
 	const extraClasses = written.classes.filter(keep);

@@ -209,6 +209,22 @@ describe("C and C++ parser", () => {
 		expect(parsed.constants?.map((c) => c.name)).toEqual(["LIMIT"]);
 	});
 
+	it("keeps one copy of a method whose macro sits alone on the line above it", () => {
+		const parsed = parse("own-line.cpp");
+		expect(parsed.recovered).toBe(true);
+		// The read as written starts `size` at the macro's line; the rewrite blanks
+		// that line, but `size` is still there and read: no second copy
+		expect(functionsOf(parsed).map((f) => [f[0], f[2]])).toEqual([
+			["Box::size", "4-4"],
+			["tag", "7-7"],
+			["broken", "8-10"],
+			["split", "12-17"],
+		]);
+		expect(
+			parsed.classes.map((c) => [c.name, c.methods, c.complexity]),
+		).toEqual([["Box", ["size"], 1]]);
+	});
+
 	it("reads through a macro another file of the repo defines, only when told about it", () => {
 		const header = fs.readFileSync(path.join(DIR, "export.h"), "utf-8");
 		const names = (opts: Parameters<typeof parseFile>[3]) =>
@@ -305,6 +321,14 @@ describe("C and C++ parser", () => {
 				new Set(["redisAtomic"]),
 			),
 		).toBe(`static ${" ".repeat(11)} int n;`);
+		// Text in a string, a character or a comment on the same line isn't a macro;
+		// a digit separator opens no character literal
+		expect(blankMacros("int f(int n = 1'000) LOCKS_EXCLUDED(mu);", [0])).toBe(
+			`int f(int n = 1'000) ${" ".repeat(18)};`,
+		);
+		const literals =
+			'  log("x LUAI_FUNC y"); // FOO_BAR int\n  /* LIB_API int */ int z;';
+		expect(blankMacros(literals, [0, 1])).toBe(literals);
 		// One-line statements are not types or attributes: left as they are
 		const statements =
 			"if (!p) p = q;\nfor (;;) x = 1;\nif (done) return;\nwhile (n) n--;";
@@ -419,6 +443,7 @@ describe("C and C++ parser", () => {
 			"edge.cpp",
 			"export.h",
 			"macro.c",
+			"own-line.cpp",
 			"recovery.cpp",
 			"shape.cpp",
 			"shape.h",

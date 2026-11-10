@@ -356,12 +356,59 @@ export function blankMacros(text, rows, onlyKnown = false, repoMacros = NONE) {
     }
     return chars.join("");
 }
+/**
+ * Which columns of one line sit inside a string or character literal or a
+ * comment. Per line only: a block comment or raw string opened on an earlier
+ * line isn't seen (blanking a name there changes no code, only a body hash).
+ */
+function literalColumns(line) {
+    const inside = new Array(line.length).fill(false);
+    let quote = "";
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (quote) {
+            inside[i] = true;
+            if (ch === "\\") {
+                inside[i + 1] = true;
+                i++;
+            }
+            else if (ch === quote)
+                quote = "";
+            continue;
+        }
+        if (ch === "'" && isWordChar(line[i - 1])) {
+            // `1'000` is a digit separator; `u8'x'`, `L'x'` open a literal
+            let start = i - 1;
+            while (start > 0 && isWordChar(line[start - 1]))
+                start--;
+            if (/[0-9]/.test(line[start]))
+                continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            inside[i] = true;
+        }
+        else if (ch === "/" && line[i + 1] === "/") {
+            inside.fill(true, i);
+            break;
+        }
+        else if (ch === "/" && line[i + 1] === "*") {
+            const close = line.indexOf("*/", i + 2);
+            const end = close === -1 ? line.length : close + 2;
+            inside.fill(true, i, end);
+            i = end - 1;
+        }
+    }
+    return inside;
+}
 /** Blank the names `wanted` accepts on one line, where an attribute can sit (see blankMacros). */
 function blankNames(text, chars, from, to, wanted) {
     const line = text.slice(from, to);
+    const literal = literalColumns(line);
     for (const match of line.matchAll(/\b[A-Za-z_]\w*\b/g)) {
         const name = match[0];
-        if (!wanted(name))
+        // A name inside a string, a character or a comment is text, not a macro
+        if (!wanted(name) || literal[match.index ?? 0])
             continue;
         const start = from + (match.index ?? 0);
         let end = start + name.length;
