@@ -275,10 +275,10 @@ function read(root, source, relativePath, language) {
  * `recovered`, and onTree then receives its tree.
  *
  * @param onTree - Optional: also receives the syntax tree before it is freed
- * @param repoMacros - Optional: the repo's attribute macros (collectAttributeMacros)
+ * @param options - Optional: the repo's attribute macros, and the recovery budget
  * @returns The file's functions, classes, includes, exports and scalar macros
  */
-export function parseFile(absolutePath, relativePath, onTree, repoMacros) {
+export function parseFile(absolutePath, relativePath, onTree, options = {}) {
     const source = fs.readFileSync(absolutePath, "utf-8");
     const language = dialectOf(relativePath, source);
     const { parser } = DIALECTS[language];
@@ -290,7 +290,7 @@ export function parseFile(absolutePath, relativePath, onTree, repoMacros) {
     try {
         const parsed = read(tree.rootNode, source, relativePath, language);
         if (tree.rootNode.hasError)
-            rewritten = recover(tree.rootNode, source, language, repoMacros);
+            rewritten = recover(tree.rootNode, source, language, options);
         if (!rewritten) {
             onTree?.(tree.rootNode, parsed);
             return parsed;
@@ -306,8 +306,27 @@ export function parseFile(absolutePath, relativePath, onTree, repoMacros) {
 }
 /** Rounds that blank every error's lines at once, each on what the last left. */
 const MAX_ROUNDS = 3;
-/** Parses one file's recovery may spend, so a file full of errors costs a bounded amount. */
+/** Reparses one file's recovery may spend, however small the file. */
 const MAX_REPARSES = 40;
+/**
+ * Text one file's recovery may reparse in all. A 100 KB file gets 10
+ * reparses, a 1 MB file one; the worst single file in curl, redis and fmt
+ * took 0.4-1.4 s on a loaded machine. On the corpus, a larger budget read no
+ * more files cleanly.
+ */
+export const RECOVERY_BYTES = 1_000_000;
+/**
+ * How many times recovery may reparse a file of `size` characters: the budget
+ * in bytes over the file's size, at most MAX_REPARSES. Bytes, not
+ * milliseconds, so the same file gets the same reads on any machine.
+ *
+ * @param size - The file's length
+ * @param recoveryBytes - The text recovery may reparse in all
+ * @returns The number of reparses allowed (0: no recovery)
+ */
+export function recoveryReparses(size, recoveryBytes = RECOVERY_BYTES) {
+    return Math.min(MAX_REPARSES, Math.floor(recoveryBytes / Math.max(size, 1)));
+}
 /** Rewrites in a row that read no more of the file before the search stops. */
 const MAX_MISSES = 6;
 /** Lines past an error's start that its rewrite covers: a long ERROR node is a cascade from its top. */
@@ -363,15 +382,16 @@ function regionRows(node, lines, span = MAX_REGION_ROWS) {
  *
  * @returns The best rewrite, or null when none reads more of the file
  */
-function recover(root, source, language, repoMacros) {
+function recover(root, source, language, { repoMacros, recoveryBytes = RECOVERY_BYTES }) {
     const { parser } = DIALECTS[language];
+    const maxReparses = recoveryReparses(source.length, recoveryBytes);
     let best = null;
     let bestText = source;
     let bestRoot = root;
     let bestSize = errorSize(root);
     let reparses = 0;
     const keepIfBetter = (text) => {
-        if (text === bestText || reparses >= MAX_REPARSES)
+        if (text === bestText || reparses >= maxReparses)
             return false;
         reparses++;
         const tree = parser.parse(text);
@@ -393,7 +413,7 @@ function recover(root, source, language, repoMacros) {
         const tried = new Set();
         let improved = true;
         let misses = 0;
-        while (improved && bestSize > 0 && reparses < MAX_REPARSES) {
+        while (improved && bestSize > 0 && reparses < maxReparses) {
             improved = false;
             const lines = bestText.split("\n");
             for (const node of errorNodes(bestRoot)) {

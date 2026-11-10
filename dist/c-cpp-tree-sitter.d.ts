@@ -21,8 +21,32 @@ export { C_CPP_EXTENSIONS } from "./file-walker.js";
  * `recovered`, and onTree then receives its tree.
  *
  * @param onTree - Optional: also receives the syntax tree before it is freed
- * @param repoMacros - Optional: the repo's attribute macros (collectAttributeMacros)
+ * @param options - Optional: the repo's attribute macros, and the recovery budget
  * @returns The file's functions, classes, includes, exports and scalar macros
  */
-export declare function parseFile(absolutePath: string, relativePath: string, onTree?: OnTree, repoMacros?: ReadonlySet<string>): ParsedFile;
+export declare function parseFile(absolutePath: string, relativePath: string, onTree?: OnTree, options?: CppParseOptions): ParsedFile;
+/**
+ * Text one file's recovery may reparse in all. A 100 KB file gets 10
+ * reparses, a 1 MB file one; the worst single file in curl, redis and fmt
+ * took 0.4-1.4 s on a loaded machine. On the corpus, a larger budget read no
+ * more files cleanly.
+ */
+export declare const RECOVERY_BYTES = 1000000;
+/**
+ * How many times recovery may reparse a file of `size` characters: the budget
+ * in bytes over the file's size, at most MAX_REPARSES. Bytes, not
+ * milliseconds, so the same file gets the same reads on any machine.
+ *
+ * @param size - The file's length
+ * @param recoveryBytes - The text recovery may reparse in all
+ * @returns The number of reparses allowed (0: no recovery)
+ */
+export declare function recoveryReparses(size: number, recoveryBytes?: number): number;
+/** What parseFile may be told about the repo, and how much recovery may cost. */
+export interface CppParseOptions {
+    /** The repo's attribute macros (collectAttributeMacros), blanked where an attribute sits. */
+    repoMacros?: ReadonlySet<string>;
+    /** Bytes recovery may reparse for this file (RECOVERY_BYTES unless set); 0 turns it off. */
+    recoveryBytes?: number;
+}
 //# sourceMappingURL=c-cpp-tree-sitter.d.ts.map

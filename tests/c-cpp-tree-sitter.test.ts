@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -5,7 +7,7 @@ import {
 	collectAttributeMacros,
 	firstBranches,
 } from "../src/c-cpp-macros.js";
-import { parseFile } from "../src/c-cpp-tree-sitter.js";
+import { parseFile, recoveryReparses } from "../src/c-cpp-tree-sitter.js";
 import { isTestFile, walkFiles } from "../src/file-walker.js";
 import type { ParsedFile } from "../src/types.js";
 
@@ -162,6 +164,41 @@ describe("C and C++ parser", () => {
 		expect(cpp.imports.map((i) => i.source)).toEqual(["recovery.h"]);
 		// A file the grammar reads as written is not marked
 		expect(parse("shape.cpp").recovered).toBeUndefined();
+		// No budget, no recovery: the read as written, errors and all
+		const unrecovered = parseFile(
+			path.join(DIR, "recovery.cpp"),
+			"recovery.cpp",
+			(root) => {
+				hasError = root.hasError;
+			},
+			{ recoveryBytes: 0 },
+		);
+		expect(hasError).toBe(true);
+		expect(unrecovered.recovered).toBeUndefined();
+	});
+
+	it("bounds what recovery spends on a file full of errors, keeping the best partial read", () => {
+		// The budget is text reparsed, so it binds the time whatever the machine
+		expect(
+			[10_000, 100_000, 1_000_000, 1_200_000, 3_000_000].map((n) =>
+				recoveryReparses(n),
+			),
+		).toEqual([40, 10, 1, 0, 0]);
+		// 300 KB built to exhaust it: every line in error, and each rewrite reads a
+		// little more without ever reading all of it
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cpp-budget-"));
+		const file = path.join(dir, "broken.c");
+		fs.writeFileSync(file, "CALL_ME(x) int f(( {\n".repeat(15_000));
+		try {
+			let hasError = false;
+			const parsed = parseFile(file, "broken.c", (root) => {
+				hasError = root.hasError;
+			});
+			expect(hasError).toBe(true);
+			expect(parsed.recovered).toBe(true);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("blanks attribute macros where an attribute sits, never where a value does", () => {
