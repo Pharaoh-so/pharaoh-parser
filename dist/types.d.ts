@@ -136,7 +136,7 @@ export interface ParsedUnverifiedTemplateRefs {
 }
 export interface ParsedFile {
     path: string;
-    language: "typescript" | "tsx" | "python" | "javascript" | "jsx" | "vue";
+    language: "typescript" | "tsx" | "python" | "javascript" | "jsx" | "vue" | "c" | "cpp";
     loc: number;
     functions: ParsedFunction[];
     classes: ParsedClass[];

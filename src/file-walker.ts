@@ -30,7 +30,17 @@ const SOURCE_EXTENSIONS = new Set([
 	".vue",
 ]);
 
+/**
+ * File extensions read as C or C++, lower-case. Walked only on request (see
+ * walkFiles): a caller that has no C/C++ parser must not be handed these files.
+ */
+export const C_CPP_EXTENSIONS = new Set([
+	...[".c", ".h"],
+	...[".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".ipp", ".inl"],
+]);
+
 const JS_EXT = "(?:[cm]?[jt]sx?)";
+const C_EXT = "(?:c|cc|cpp|cxx)";
 const TEST_PATH_RE = new RegExp(
 	[
 		// x.test.ts, x.spec.tsx, x.test.mts, and NestJS's app.e2e-spec.ts
@@ -50,6 +60,9 @@ const TEST_PATH_RE = new RegExp(
 		"(?:^|/)test_[^/]*\\.py$",
 		"_test\\.py$",
 		"(?:^|/)conftest\\.py$",
+		// C and C++: x_test.cc, x_unittest.cpp, test_x.c
+		`_(?:test|unittest)\\.${C_EXT}$`,
+		`(?:^|/)test_[^/]*\\.${C_EXT}$`,
 		// Storybook
 		"\\.stories\\.(?:ts|tsx)$",
 	].join("|"),
@@ -68,7 +81,16 @@ export interface WalkedFile {
 	relativePath: string;
 }
 
-export function walkFiles(repoRoot: string): WalkedFile[] {
+/**
+ * Lists a repository's source files, skipping ignored directories.
+ * @param repoRoot - The repository's root directory
+ * @param options - `cpp: true` also lists C and C++ files (see C_CPP_EXTENSIONS)
+ * @returns Each file's native and repo-relative path
+ */
+export function walkFiles(
+	repoRoot: string,
+	options: { cpp?: boolean } = {},
+): WalkedFile[] {
 	const ig = ignore();
 
 	// Load .gitignore if present
@@ -82,7 +104,7 @@ export function walkFiles(repoRoot: string): WalkedFile[] {
 	ig.add(HARDCODED_IGNORES);
 
 	const results: WalkedFile[] = [];
-	walkDir(repoRoot, repoRoot, ig, results);
+	walkDir(repoRoot, repoRoot, ig, results, options.cpp ?? false);
 	return results;
 }
 
@@ -91,6 +113,7 @@ function walkDir(
 	repoRoot: string,
 	ig: ReturnType<typeof ignore>,
 	results: WalkedFile[],
+	cpp: boolean,
 ): void {
 	const entries = fs.readdirSync(dir, { withFileTypes: true });
 
@@ -109,10 +132,11 @@ function walkDir(
 		}
 
 		if (entry.isDirectory()) {
-			walkDir(absolutePath, repoRoot, ig, results);
+			walkDir(absolutePath, repoRoot, ig, results, cpp);
 		} else if (
 			entry.isFile() &&
-			SOURCE_EXTENSIONS.has(path.extname(entry.name))
+			(SOURCE_EXTENSIONS.has(path.extname(entry.name)) ||
+				(cpp && C_CPP_EXTENSIONS.has(path.extname(entry.name).toLowerCase())))
 		) {
 			results.push({ absolutePath, relativePath });
 		}

@@ -31,6 +31,10 @@
 			"types": "./src/python-tree-sitter.ts",
 			"import": "./dist/python-tree-sitter.js"
 		},
+		"./cpp": {
+			"types": "./src/c-cpp-tree-sitter.ts",
+			"import": "./dist/c-cpp-tree-sitter.js"
+		},
 		"./walker": {
 			"types": "./src/file-walker.ts",
 			"import": "./dist/file-walker.js"
@@ -66,6 +70,8 @@
 	"dependencies": {
 		"@vue/compiler-sfc": "^3.5.43",
 		"ignore": "^7.0.5",
+		"tree-sitter-c": "0.24.1",
+		"tree-sitter-cpp": "0.23.4",
 		"tree-sitter-python": "^0.25.0",
 		"tree-sitter-typescript": "0.23.2",
 		"tsx": "^4.19.0",
