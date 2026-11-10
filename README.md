@@ -120,7 +120,15 @@ Learn more at [pharaoh.so](https://pharaoh.so).
 
 It extracts function and method definitions (including `A::f` defined outside its class, overloads, constructors, destructors and operators), classes, structs and unions with their bases and method names, `#include` lines, a header's prototypes as its exports, and short object-like macros as constants. It does not extract calls.
 
-Nothing is preprocessed. Both branches of an `#if` are read, and a macro the grammar cannot read as C leaves a syntax error in the tree: the file still returns what was found around it, and the function that macro would declare is missing. On four public repositories, files with at least one such error ranged from 25% (leveldb) to 53% (fmt), covering 0.1% to 21% of their text; attribute and annotation macros such as `GUARDED_BY(mu)` are the usual cause.
+Nothing is preprocessed. A file is first read as written, both branches of every `#if` included. When that leaves a syntax error, usually an attribute macro such as `GUARDED_BY(mu)` or an `#if` whose branches each hold half a statement, the file is read again through rewrites borrowed from Doxygen's preprocessor:
+
+- blank attribute-like macros: a known list, the repo's own attribute-only `#define`s (`collectAttributeMacros`), and upper-case macros where an attribute can sit but a value can't;
+- blank an upper-case macro alone on its line;
+- read one branch of each conditional.
+
+Each rewrite keeps every line and column and is kept only if less of the file is then in error. What that read finds is marked `recovered: true`: it rests on guesses about what macros expand to, so calls read from it are candidates, never exact.
+
+Files with at least one syntax error after recovery, on four public repositories (before recovery in brackets): curl 4.1% (27%), leveldb 6.8% (25%), redis 12.1% (47%, mostly vendored code under `deps/`), fmt 37.8% (53%).
 
 ## Dependencies
 

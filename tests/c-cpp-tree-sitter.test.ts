@@ -1,5 +1,10 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+	blankMacros,
+	collectAttributeMacros,
+	firstBranches,
+} from "../src/c-cpp-macros.js";
 import { parseFile } from "../src/c-cpp-tree-sitter.js";
 import { isTestFile, walkFiles } from "../src/file-walker.js";
 import type { ParsedFile } from "../src/types.js";
@@ -121,20 +126,146 @@ describe("C and C++ parser", () => {
 		]);
 	});
 
-	it("keeps what it can read around a macro the grammar cannot, and says so", () => {
-		let hasError = false;
+	it("reads a file through the macros the grammar cannot, and marks what it read that way", () => {
+		let hasError = true;
 		const parsed = parse("macro.c", (root) => {
 			hasError = root.hasError;
 		});
-		// `DECLARE_HANDLER(open) {...}` is not C until preprocessed: the tree
-		// reports the error and the function it would declare is absent.
-		expect(hasError).toBe(true);
-		// An attribute macro before the type is read through; both `#if` branches are read.
+		// `API` is blanked as an attribute; `DECLARE_HANDLER(open) {...}` is not
+		// read as a function, and no name is invented for it
+		expect(hasError).toBe(false);
+		expect(parsed.recovered).toBe(true);
 		expect(functionsOf(parsed)).toEqual([
-			["api_call", "API int api_call(void)", "4-4", 1, 0, true],
+			["api_call", "int api_call(void)", "4-4", 1, 0, true],
 			["platform", "int platform(void)", "11-11", 1, 0, true],
 			["platform", "int platform(void)", "13-13", 1, 0, true],
 		]);
+
+		const cpp = parse("recovery.cpp", (root) => {
+			hasError = root.hasError;
+		});
+		expect(hasError).toBe(false);
+		expect(cpp.recovered).toBe(true);
+		// Lines are the file's as written; signatures read without the macros
+		expect(functionsOf(cpp)).toEqual([
+			["Widget::size", "int size() const", "7-7", 1, 0, true],
+			["twice", "auto twice(T value) -> T", "15-18", 2, 1, true],
+			["connect", "int connect(int fd)", "20-29", 2, 1, true],
+		]);
+		expect(
+			cpp.classes.map((c) => [
+				c.name,
+				`${c.lineStart}-${c.lineEnd}`,
+				c.methods,
+			]),
+		).toEqual([["Widget", "5-12", ["size", "Lock"]]]);
+		expect(cpp.imports.map((i) => i.source)).toEqual(["recovery.h"]);
+		// A file the grammar reads as written is not marked
+		expect(parse("shape.cpp").recovered).toBeUndefined();
+	});
+
+	it("blanks attribute macros where an attribute sits, never where a value does", () => {
+		const text = [
+			"LUAI_FUNC void f(void);",
+			"int x = MAX_SIZE;",
+			"case FOO_BAR: break;",
+			"call(FOO_BAR);",
+			"struct MY_STRUCT {",
+			"int y GUARDED_BY(mu);",
+			"class LIB_EXPORT Db {",
+			"T *RESTRICT_PTR p;",
+			"FMT_BEGIN_NAMESPACE",
+			"ql_elm(edata_t) link;",
+			"template <typename T, ENABLE_IF(is_int<T>::value)> void g();",
+		].join("\n");
+		const rows = text.split("\n").map((_, row) => row);
+		expect(blankMacros(text, rows).split("\n")).toEqual([
+			"          void f(void);",
+			"int x = MAX_SIZE;",
+			"case FOO_BAR: break;",
+			"call(FOO_BAR);",
+			"struct MY_STRUCT {",
+			`int y ${" ".repeat(14)};`,
+			"class            Db {",
+			`T *${" ".repeat(13)}p;`,
+			"                   ",
+			"ql_elm          link;",
+			`template <typename T, int=0${" ".repeat(22)}> void g();`,
+		]);
+		// The standard `va_arg` reads a type; a call with a string before `{` opens a block
+		expect(
+			blankMacros(
+				'x = va_arg(ap, char *);\n  TEST("adds keys") {',
+				[0, 1],
+			).split("\n"),
+		).toEqual([`x = va_arg(ap${" ".repeat(8)});`, `  ${" ".repeat(17)} {`]);
+		// A repo's own attribute macro is blanked wherever an attribute sits
+		expect(
+			blankMacros(
+				"static redisAtomic int n;",
+				"all",
+				true,
+				new Set(["redisAtomic"]),
+			),
+		).toBe(`static ${" ".repeat(11)} int n;`);
+		// Only the rows asked for, and only known annotations when asked for those
+		expect(blankMacros(text, [1, 5])).toBe(
+			text.replace("GUARDED_BY(mu)", " ".repeat(14)),
+		);
+		expect(
+			blankMacros(
+				"void f() LOCKS_EXCLUDED(mu);\nLUAI_FUNC int g;",
+				"all",
+				true,
+			),
+		).toBe(`void f() ${" ".repeat(18)};\nLUAI_FUNC int g;`);
+	});
+
+	it("collects a repo's attribute macros from its #defines, as Doxygen's PREDEFINED would", () => {
+		const header = [
+			'#define LUAI_FUNC __attribute__((visibility("hidden"))) extern',
+			"#define API_EXPORT",
+			"#define ALWAYS_INLINE static inline LUAI_FUNC",
+			"#define GUARDED(x) __attribute__((guarded_by(x)))",
+			"#define redisAtomic _Atomic",
+			"#define DEBUG 1",
+			"#define MAX(a, b) ((a) > (b) ? (a) : (b))",
+			"#define CONSTEXPR constexpr",
+		].join("\n");
+		// `CONSTEXPR` is also defined as a value elsewhere: left out
+		const other =
+			"#define CONSTEXPR 0\n#define API_EXPORT __declspec(dllexport)";
+		expect([...collectAttributeMacros([header, other])].sort()).toEqual([
+			"ALWAYS_INLINE",
+			"API_EXPORT",
+			"GUARDED",
+			"LUAI_FUNC",
+			"redisAtomic",
+		]);
+	});
+
+	it("reads one branch of each conditional, as the dialect's compiler would", () => {
+		const text = [
+			"#ifdef __cplusplus",
+			'extern "C" {',
+			"#endif",
+			"int a;",
+			"#if 0",
+			"int b;",
+			"#else",
+			"int c;",
+			"#endif",
+			"#define TWICE(x) \\",
+			"  ((x) * 2)",
+		].join("\n");
+		const blankLine = (line: string) => " ".repeat(line.length);
+		const lines = text.split("\n");
+		const expected = lines.map((line, i) =>
+			[3, 7].includes(i) ? line : blankLine(line),
+		);
+		expect(firstBranches(text, "c").split("\n")).toEqual(expected);
+		// In C++, `extern "C" {` is read
+		expect(firstBranches(text, "cpp").split("\n")[1]).toBe('extern "C" {');
 	});
 
 	it("reads template members, and takes neither local declarations nor code macros for definitions", () => {
@@ -168,6 +299,7 @@ describe("C and C++ parser", () => {
 		expect(names(walkFiles(DIR, { cpp: true }))).toEqual([
 			"edge.cpp",
 			"macro.c",
+			"recovery.cpp",
 			"shape.cpp",
 			"shape.h",
 			"util.c",

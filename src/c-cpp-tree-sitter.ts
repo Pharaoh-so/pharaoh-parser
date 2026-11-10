@@ -15,7 +15,10 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { Language, Query } from "web-tree-sitter";
+import { Language, Query, type Tree } from "web-tree-sitter";
+import { blankMacros, firstBranches } from "./c-cpp-macros.js";
+
+export { collectAttributeMacros } from "./c-cpp-macros.js";
 import {
 	type OnTree,
 	SECRET_NAME_SUFFIX,
@@ -196,6 +199,122 @@ function baseNames(classNode: SyntaxNode): string[] {
 		.filter((name) => name !== "" && name !== "virtual");
 }
 
+/** Read one syntax tree of a file (as written, or rewritten) into a ParsedFile. */
+function read(
+	root: SyntaxNode,
+	source: string,
+	relativePath: string,
+	language: "c" | "cpp",
+): ParsedFile {
+	const { query } = DIALECTS[language];
+	const functions: ParsedFunction[] = [];
+	const classes: ParsedClass[] = [];
+	const exports: ParsedExport[] = [];
+	const methodsOf = new Map<string, Set<string>>();
+	const classNodes: SyntaxNode[] = [];
+	const seen = new Set<number>();
+	const exported = new Set<string>();
+	const exportOnce = (name: string, kind: ParsedExport["kind"]): void => {
+		if (exported.has(`${kind}:${name}`)) return;
+		exported.add(`${kind}:${name}`);
+		exports.push({ name, kind, isDefault: false });
+	};
+
+	for (const { name: tag, node } of query.captures(root)) {
+		if (seen.has(node.id)) continue;
+		if (tag === "definition.class" && CLASS_TYPES.has(node.type)) {
+			seen.add(node.id);
+			if (node.childForFieldName("body")) classNodes.push(node);
+			continue;
+		}
+		if (node.type !== "function_declarator") continue;
+		seen.add(node.id);
+
+		const declared = declaredName(node);
+		let owner = node.parent;
+		while (owner && WRAPPING_DECLARATORS.has(owner.type)) owner = owner.parent;
+		if (!declared || !owner) continue;
+		// `Foo a(b);` in a body reads as a prototype but declares a variable
+		if (owner.type !== "function_definition" && insideBody(owner)) continue;
+		const where = enclosing(owner);
+		const className = declared.scope ?? where.className;
+		if (className) {
+			const methods = methodsOf.get(className) ?? new Set<string>();
+			methodsOf.set(className, methods.add(declared.name));
+		}
+		const isExported = !where.internal && (!!className || !isStatic(owner));
+
+		if (owner.type !== "function_definition") {
+			// A prototype: the header's promise of a function defined elsewhere
+			const prototype =
+				owner.type === "declaration" || owner.type === "field_declaration";
+			if (prototype && !className && isExported) {
+				exportOnce(declared.name, "function");
+			}
+			continue;
+		}
+		const body = owner.childForFieldName("body");
+		// Up to the body, or to a constructor's `: member(value)` list before it
+		const head = owner.children.find(
+			(c) => c?.type === "field_initializer_list" || c?.id === body?.id,
+		);
+		const signature = oneLine(
+			source.slice(owner.startIndex, head?.startIndex ?? owner.endIndex),
+		).slice(0, MAX_SIGNATURE_LENGTH);
+		functions.push({
+			name: declared.name,
+			signature,
+			lineStart: owner.startPosition.row + 1,
+			lineEnd: owner.endPosition.row + 1,
+			loc: owner.endPosition.row - owner.startPosition.row + 1,
+			complexity: computeComplexity(
+				body ?? owner,
+				COMPLEXITY_TYPES,
+				isLogicalOperator,
+			),
+			isExported,
+			isAsync: false,
+			...(className ? { className } : {}),
+			bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
+			// `f(void)` takes nothing
+			paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
+		});
+		if (!className && isExported) exportOnce(declared.name, "function");
+	}
+
+	for (const node of classNodes) {
+		const name = node.childForFieldName("name")?.text;
+		if (!name) continue;
+		const lineStart = node.startPosition.row + 1;
+		const lineEnd = node.endPosition.row + 1;
+		const [base, ...otherBases] = baseNames(node);
+		const isExported = !enclosing(node).internal;
+		classes.push({
+			name,
+			lineStart,
+			lineEnd,
+			...computeClassMetrics(name, lineStart, lineEnd, functions),
+			isExported,
+			methods: [...(methodsOf.get(name) ?? [])],
+			...(base ? { extends: base } : {}),
+			...(otherBases.length > 0 ? { implements: otherBases } : {}),
+		});
+		if (isExported) exportOnce(name, "class");
+	}
+
+	const parsed: ParsedFile = {
+		path: relativePath,
+		language,
+		loc: source.split("\n").length,
+		functions,
+		classes,
+		imports: includes(root),
+		exports,
+		constants: scalarMacros(root),
+	};
+	return parsed;
+}
+
 /**
  * Parses a C or C++ file into its structural metadata.
  *
@@ -209,137 +328,275 @@ function baseNames(classNode: SyntaxNode): string[] {
  *
  * @param absolutePath - The file to read
  * @param relativePath - Its path in the repo, as recorded in the result
+ * A file the grammar cannot read as written (an unknown attribute macro, an
+ * `#if` whose branches each hold half a statement) is read again through
+ * rewrites that blank macros (see recover); what that read finds is marked
+ * `recovered`, and onTree then receives its tree.
+ *
  * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @param repoMacros - Optional: the repo's attribute macros (collectAttributeMacros)
  * @returns The file's functions, classes, includes, exports and scalar macros
  */
 export function parseFile(
 	absolutePath: string,
 	relativePath: string,
 	onTree?: OnTree,
+	repoMacros?: ReadonlySet<string>,
 ): ParsedFile {
 	const source = fs.readFileSync(absolutePath, "utf-8");
 	const language = dialectOf(relativePath, source);
-	const { parser, query } = DIALECTS[language];
+	const { parser } = DIALECTS[language];
 	const tree = parser.parse(source);
 	if (!tree) throw new Error(`Failed to parse ${relativePath}`);
-
-	// The tree lives in WASM memory until it is deleted (see python-tree-sitter.ts).
+	// Trees live in WASM memory until they are deleted (see python-tree-sitter.ts).
+	let rewritten: Rewritten | null = null;
 	try {
-		const functions: ParsedFunction[] = [];
-		const classes: ParsedClass[] = [];
-		const exports: ParsedExport[] = [];
-		const methodsOf = new Map<string, Set<string>>();
-		const classNodes: SyntaxNode[] = [];
-		const seen = new Set<number>();
-		const exported = new Set<string>();
-		const exportOnce = (name: string, kind: ParsedExport["kind"]): void => {
-			if (exported.has(`${kind}:${name}`)) return;
-			exported.add(`${kind}:${name}`);
-			exports.push({ name, kind, isDefault: false });
-		};
-
-		for (const { name: tag, node } of query.captures(tree.rootNode)) {
-			if (seen.has(node.id)) continue;
-			if (tag === "definition.class" && CLASS_TYPES.has(node.type)) {
-				seen.add(node.id);
-				if (node.childForFieldName("body")) classNodes.push(node);
-				continue;
-			}
-			if (node.type !== "function_declarator") continue;
-			seen.add(node.id);
-
-			const declared = declaredName(node);
-			let owner = node.parent;
-			while (owner && WRAPPING_DECLARATORS.has(owner.type))
-				owner = owner.parent;
-			if (!declared || !owner) continue;
-			// `Foo a(b);` in a body reads as a prototype but declares a variable
-			if (owner.type !== "function_definition" && insideBody(owner)) continue;
-			const where = enclosing(owner);
-			const className = declared.scope ?? where.className;
-			if (className) {
-				const methods = methodsOf.get(className) ?? new Set<string>();
-				methodsOf.set(className, methods.add(declared.name));
-			}
-			const isExported = !where.internal && (!!className || !isStatic(owner));
-
-			if (owner.type !== "function_definition") {
-				// A prototype: the header's promise of a function defined elsewhere
-				const prototype =
-					owner.type === "declaration" || owner.type === "field_declaration";
-				if (prototype && !className && isExported) {
-					exportOnce(declared.name, "function");
-				}
-				continue;
-			}
-			const body = owner.childForFieldName("body");
-			// Up to the body, or to a constructor's `: member(value)` list before it
-			const head = owner.children.find(
-				(c) => c?.type === "field_initializer_list" || c?.id === body?.id,
-			);
-			const signature = oneLine(
-				source.slice(owner.startIndex, head?.startIndex ?? owner.endIndex),
-			).slice(0, MAX_SIGNATURE_LENGTH);
-			functions.push({
-				name: declared.name,
-				signature,
-				lineStart: owner.startPosition.row + 1,
-				lineEnd: owner.endPosition.row + 1,
-				loc: owner.endPosition.row - owner.startPosition.row + 1,
-				complexity: computeComplexity(
-					body ?? owner,
-					COMPLEXITY_TYPES,
-					isLogicalOperator,
-				),
-				isExported,
-				isAsync: false,
-				...(className ? { className } : {}),
-				bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
-				// `f(void)` takes nothing
-				paramCount: countParams(
-					node,
-					PARAMETER_TYPES,
-					(p) => p.text === "void",
-				),
-			});
-			if (!className && isExported) exportOnce(declared.name, "function");
+		const parsed = read(tree.rootNode, source, relativePath, language);
+		if (tree.rootNode.hasError)
+			rewritten = recover(tree.rootNode, source, language, repoMacros);
+		if (!rewritten) {
+			onTree?.(tree.rootNode, parsed);
+			return parsed;
 		}
-
-		for (const node of classNodes) {
-			const name = node.childForFieldName("name")?.text;
-			if (!name) continue;
-			const lineStart = node.startPosition.row + 1;
-			const lineEnd = node.endPosition.row + 1;
-			const [base, ...otherBases] = baseNames(node);
-			const isExported = !enclosing(node).internal;
-			classes.push({
-				name,
-				lineStart,
-				lineEnd,
-				...computeClassMetrics(name, lineStart, lineEnd, functions),
-				isExported,
-				methods: [...(methodsOf.get(name) ?? [])],
-				...(base ? { extends: base } : {}),
-				...(otherBases.length > 0 ? { implements: otherBases } : {}),
-			});
-			if (isExported) exportOnce(name, "class");
-		}
-
-		const parsed: ParsedFile = {
-			path: relativePath,
-			language,
-			loc: source.split("\n").length,
-			functions,
-			classes,
-			imports: includes(tree.rootNode),
-			exports,
-			constants: scalarMacros(tree.rootNode),
-		};
-		onTree?.(tree.rootNode, parsed);
-		return parsed;
+		const merged = merge(
+			parsed,
+			read(rewritten.tree.rootNode, rewritten.text, relativePath, language),
+			errorSpans(tree.rootNode),
+		);
+		onTree?.(rewritten.tree.rootNode, merged);
+		return merged;
 	} finally {
 		tree.delete();
+		rewritten?.tree.delete();
 	}
+}
+
+/** A rewritten text and its tree, which the caller deletes. */
+interface Rewritten {
+	text: string;
+	tree: Tree;
+}
+
+/** Rounds that blank every error's lines at once, each on what the last left. */
+const MAX_ROUNDS = 3;
+
+/** Parses one file's recovery may spend, so a file full of errors costs a bounded amount. */
+const MAX_REPARSES = 40;
+
+/** Rewrites in a row that read no more of the file before the search stops. */
+const MAX_MISSES = 6;
+
+/** Lines past an error's start that its rewrite covers: a long ERROR node is a cascade from its top. */
+const MAX_REGION_ROWS = 4;
+
+/** The top-level error regions of a tree: ERROR nodes and missing tokens. */
+function errorNodes(root: SyntaxNode): SyntaxNode[] {
+	const found: SyntaxNode[] = [];
+	const visit = (node: SyntaxNode): void => {
+		if (node.isError || node.isMissing) {
+			found.push(node);
+			return;
+		}
+		for (const child of node.children) if (child?.hasError) visit(child);
+	};
+	visit(root);
+	return found;
+}
+
+/** How much of a tree is in error: bytes inside ERROR nodes, one per missing token. */
+const errorSize = (root: SyntaxNode): number =>
+	errorNodes(root).reduce(
+		(size, node) => size + Math.max(1, node.endIndex - node.startIndex),
+		0,
+	);
+
+/** One-based line spans of a tree's error regions. */
+const errorSpans = (root: SyntaxNode): [number, number][] =>
+	errorNodes(root).map((node) => [
+		node.startPosition.row + 1,
+		node.endPosition.row + 1,
+	]);
+
+/**
+ * Zero-based rows to rewrite for one error: back to the last line with text
+ * before it, where the macro that caused it often sits (`TEST_END`, a blank
+ * line, then the `static void` the error starts at), through its first few
+ * lines and its last.
+ */
+function regionRows(
+	node: SyntaxNode,
+	lines: string[],
+	span = MAX_REGION_ROWS,
+): number[] {
+	let first = node.startPosition.row - 1;
+	while (first > 0 && lines[first].trim() === "") first--;
+	const last = node.endPosition.row;
+	const rows: number[] = [];
+	for (
+		let r = Math.max(first, 0);
+		r <= Math.min(last, node.startPosition.row + span);
+		r++
+	) {
+		rows.push(r);
+	}
+	if (rows.at(-1) !== last) rows.push(last);
+	return rows;
+}
+
+/**
+ * Read a file the grammar could not read as written. Each rewrite is kept only
+ * if less of the file is then in error, so a guess that breaks code elsewhere
+ * is dropped: first the annotations that are safe to blank anywhere, then the
+ * macros at each error, one error at a time (blankMacros), then one branch of
+ * each conditional (firstBranches) and each error again. Every rewrite keeps
+ * lines and columns.
+ *
+ * @returns The best rewrite, or null when none reads more of the file
+ */
+function recover(
+	root: SyntaxNode,
+	source: string,
+	language: "c" | "cpp",
+	repoMacros?: ReadonlySet<string>,
+): Rewritten | null {
+	const { parser } = DIALECTS[language];
+	let best: Rewritten | null = null;
+	let bestText = source;
+	let bestRoot = root;
+	let bestSize = errorSize(root);
+	let reparses = 0;
+	const keepIfBetter = (text: string): boolean => {
+		if (text === bestText || reparses >= MAX_REPARSES) return false;
+		reparses++;
+		const tree = parser.parse(text);
+		if (!tree) return false;
+		const size = errorSize(tree.rootNode);
+		if (size >= bestSize) {
+			tree.delete();
+			return false;
+		}
+		best?.tree.delete();
+		best = { text, tree };
+		bestText = text;
+		bestRoot = tree.rootNode;
+		bestSize = size;
+		return true;
+	};
+	const eachError = (): void => {
+		const tried = new Set<string>();
+		let improved = true;
+		let misses = 0;
+		while (improved && bestSize > 0 && reparses < MAX_REPARSES) {
+			improved = false;
+			const lines = bestText.split("\n");
+			for (const node of errorNodes(bestRoot)) {
+				if (misses >= MAX_MISSES) return;
+				const rows = regionRows(node, lines);
+				const key = rows.map((r) => lines[r]).join("\n");
+				if (tried.has(key)) continue;
+				tried.add(key);
+				const next = blankMacros(bestText, rows, false, repoMacros);
+				if (next === bestText) continue;
+				// A kept rewrite changes the tree: list its errors again
+				if (keepIfBetter(next)) {
+					improved = true;
+					misses = 0;
+					break;
+				}
+				misses++;
+			}
+		}
+	};
+	// Every error's lines at once: one parse for what is usually most of the fix
+	const everyError = (): Set<number> => {
+		const lines = bestText.split("\n");
+		const rows = new Set<number>();
+		for (const node of errorNodes(bestRoot)) {
+			for (const row of regionRows(node, lines, Number.POSITIVE_INFINITY)) {
+				rows.add(row);
+			}
+		}
+		return rows;
+	};
+	const pass = (): void => {
+		for (let round = 0; round < MAX_ROUNDS && bestSize > 0; round++) {
+			if (!keepIfBetter(blankMacros(bestText, everyError(), false, repoMacros)))
+				break;
+		}
+		eachError();
+	};
+	try {
+		keepIfBetter(blankMacros(source, "all", true, repoMacros));
+		pass();
+		if (bestSize > 0) {
+			const branches = firstBranches(bestText, language);
+			if (
+				keepIfBetter(branches) ||
+				keepIfBetter(blankMacros(branches, everyError(), false, repoMacros))
+			) {
+				pass();
+			}
+		}
+		return best;
+	} catch (err) {
+		(best as Rewritten | null)?.tree.delete();
+		throw err;
+	}
+}
+
+/**
+ * The facts of a rewritten read, plus what the read as written found outside
+ * its error regions that the rewrite lost (a function in an `#else` branch the
+ * rewrite blanked). Includes and constants come from the text as written.
+ *
+ * @param written - The read of the file as written
+ * @param rewritten - The read of the best rewrite
+ * @param errors - One-based line spans of the errors in the read as written
+ */
+function merge(
+	written: ParsedFile,
+	rewritten: ParsedFile,
+	errors: [number, number][],
+): ParsedFile {
+	const sound = (item: { lineStart: number; lineEnd: number }): boolean =>
+		!errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);
+	const fnKey = (f: ParsedFunction) =>
+		`${f.className ?? ""}::${f.name}@${f.lineStart}`;
+	const classKey = (c: ParsedClass) => `${c.name}@${c.lineStart}`;
+	const haveFns = new Set(rewritten.functions.map(fnKey));
+	const haveClasses = new Set(rewritten.classes.map(classKey));
+	const extraFns = written.functions.filter(
+		(f) => !haveFns.has(fnKey(f)) && sound(f),
+	);
+	const extraClasses = written.classes.filter(
+		(c) => !haveClasses.has(classKey(c)) && sound(c),
+	);
+	// An export the rewrite lost is kept only with the definition it names
+	const kept = new Set([
+		...extraFns.filter((f) => !f.className).map((f) => `function:${f.name}`),
+		...extraClasses.map((c) => `class:${c.name}`),
+	]);
+	const haveExports = new Set(
+		rewritten.exports.map((e) => `${e.kind}:${e.name}`),
+	);
+	const byLine = <T extends { lineStart: number }>(a: T, b: T) =>
+		a.lineStart - b.lineStart;
+	return {
+		...rewritten,
+		functions: [...rewritten.functions, ...extraFns].sort(byLine),
+		classes: [...rewritten.classes, ...extraClasses].sort(byLine),
+		exports: [
+			...rewritten.exports,
+			...written.exports.filter(
+				(e) =>
+					kept.has(`${e.kind}:${e.name}`) &&
+					!haveExports.has(`${e.kind}:${e.name}`),
+			),
+		],
+		imports: written.imports,
+		constants: written.constants,
+		recovered: true,
+	};
 }
 
 /** Every `#include`, wherever an `#if` puts it: `"util.h"` as `util.h`, `<cmath>` as written. */

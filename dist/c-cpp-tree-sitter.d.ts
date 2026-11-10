@@ -1,3 +1,4 @@
+export { collectAttributeMacros } from "./c-cpp-macros.js";
 import { type OnTree } from "./parser-shared.js";
 import { type ParsedFile } from "./types.js";
 export { C_CPP_EXTENSIONS } from "./file-walker.js";
@@ -14,8 +15,14 @@ export { C_CPP_EXTENSIONS } from "./file-walker.js";
  *
  * @param absolutePath - The file to read
  * @param relativePath - Its path in the repo, as recorded in the result
+ * A file the grammar cannot read as written (an unknown attribute macro, an
+ * `#if` whose branches each hold half a statement) is read again through
+ * rewrites that blank macros (see recover); what that read finds is marked
+ * `recovered`, and onTree then receives its tree.
+ *
  * @param onTree - Optional: also receives the syntax tree before it is freed
+ * @param repoMacros - Optional: the repo's attribute macros (collectAttributeMacros)
  * @returns The file's functions, classes, includes, exports and scalar macros
  */
-export declare function parseFile(absolutePath: string, relativePath: string, onTree?: OnTree): ParsedFile;
+export declare function parseFile(absolutePath: string, relativePath: string, onTree?: OnTree, repoMacros?: ReadonlySet<string>): ParsedFile;
 //# sourceMappingURL=c-cpp-tree-sitter.d.ts.map

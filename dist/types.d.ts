@@ -147,5 +147,13 @@ export interface ParsedFile {
     templateRefs?: ParsedTemplateRef[];
     /** Vue only: template parts the parser could not read (see ParsedUnverifiedTemplateRefs). */
     unverifiedTemplateRefs?: ParsedUnverifiedTemplateRefs[];
+    /**
+     * C and C++ only: the grammar could not read the file as written, so it was
+     * read again with macros blanked and one branch of each conditional (see
+     * c-cpp-macros.ts), and this is what that read found. It rests on guesses
+     * about what macros expand to: a consumer must treat a call or reference
+     * read from it as a candidate, never as exact.
+     */
+    recovered?: boolean;
 }
 //# sourceMappingURL=types.d.ts.map
