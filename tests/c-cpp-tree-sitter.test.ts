@@ -137,11 +137,36 @@ describe("C and C++ parser", () => {
 		]);
 	});
 
+	it("reads template members, and takes neither local declarations nor code macros for definitions", () => {
+		const parsed = parse("edge.cpp");
+		// `Box<T>::set` belongs to Box; `lock(mu_)`, `copy(value_)`, `first(second)`
+		// and `int helper(int);` inside bodies declare locals, not functions
+		expect(functionsOf(parsed).map((f) => f[0])).toEqual([
+			"Box::get",
+			"Box::set",
+			"run",
+		]);
+		expect(parsed.classes.map((c) => [c.name, c.methods])).toEqual([
+			["Box", ["set", "get"]],
+		]);
+		expect(parsed.exports.map((e) => `${e.kind} ${e.name}`)).toEqual([
+			"function run",
+			"class Box",
+		]);
+		// One literal each: no secret-named macro, no code, no trailing comment
+		expect(parsed.constants?.map((c) => [c.name, c.value])).toEqual([
+			["COUNT", "3"],
+			["RATIO", "0.5"],
+			["GREETING", '"hi // there"'],
+		]);
+	});
+
 	it("lists C and C++ files only when asked, and knows their test files", () => {
 		const names = (files: { relativePath: string }[]) =>
 			files.map((f) => f.relativePath).sort();
 		expect(names(walkFiles(DIR))).toEqual([]);
 		expect(names(walkFiles(DIR, { cpp: true }))).toEqual([
+			"edge.cpp",
 			"macro.c",
 			"shape.cpp",
 			"shape.h",

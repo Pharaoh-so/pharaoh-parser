@@ -16,7 +16,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Language, Query } from "web-tree-sitter";
-import { computeBodyHash, computeComplexity, countParams, } from "./parser-shared.js";
+import { SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser } from "./wasm-init.js";
 export { C_CPP_EXTENSIONS } from "./file-walker.js";
@@ -94,7 +94,10 @@ function declaredName(declarator) {
     let scope;
     // `ns::A::f` nests to the right: each level's scope is one step closer to `f`
     while (node?.type === "qualified_identifier") {
-        scope = node.childForFieldName("scope")?.text ?? scope;
+        const part = node.childForFieldName("scope");
+        // `Box<T>::set` belongs to `Box`
+        const named = part?.type === "template_type" ? part.childForFieldName("name") : part;
+        scope = named?.text ?? scope;
         node = node.childForFieldName("name");
     }
     if (node?.type === "template_function")
@@ -125,6 +128,14 @@ function enclosing(node) {
         }
     }
     return { className, internal };
+}
+/** Whether a node sits in a function's body: what it declares is local. */
+function insideBody(node) {
+    for (let n = node.parent; n; n = n.parent) {
+        if (n.type === "compound_statement")
+            return true;
+    }
+    return false;
 }
 const isStatic = (node) => node.children.some((c) => c?.type === "storage_class_specifier" && c.text === "static");
 /** The names a class's base clause lists, without access words or template arguments. */
@@ -192,6 +203,9 @@ export function parseFile(absolutePath, relativePath, onTree) {
             while (owner && WRAPPING_DECLARATORS.has(owner.type))
                 owner = owner.parent;
             if (!declared || !owner)
+                continue;
+            // `Foo a(b);` in a body reads as a prototype but declares a variable
+            if (owner.type !== "function_definition" && insideBody(owner))
                 continue;
             const where = enclosing(owner);
             const className = declared.scope ?? where.className;
@@ -286,13 +300,26 @@ function includes(root) {
     }
     return imports;
 }
-/** Object-like macros with a short value (`#define MAX_POINTS 64`): the file's constants. */
+/** A macro value kept as a constant: one number, string or character literal. */
+const LITERAL = /^(?:[-+]?\.?\d[\w.']*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$/;
+/**
+ * Object-like macros whose value is one literal (`#define MAX_POINTS 64`): the
+ * file's constants. A macro holding code or an expression is left out, as is
+ * one named like a secret (see SECRET_NAME_SUFFIX); a trailing comment is not
+ * part of the value.
+ */
 function scalarMacros(root) {
     const constants = [];
     for (const node of root.descendantsOfType("preproc_def")) {
         const name = node?.childForFieldName("name")?.text;
-        const value = node?.childForFieldName("value")?.text.trim();
-        if (!node || !name || !value || value.length > MAX_CONSTANT_LENGTH)
+        const raw = node?.childForFieldName("value")?.text.trim();
+        // A string holding `//` is a literal as written; otherwise drop a trailing comment
+        const value = raw && !LITERAL.test(raw)
+            ? raw.replace(/\/\/.*$|\/\*.*?\*\/\s*$/s, "").trim()
+            : raw;
+        if (!node || !name || !value || SECRET_NAME_SUFFIX.test(name))
+            continue;
+        if (value.length > MAX_CONSTANT_LENGTH || !LITERAL.test(value))
             continue;
         constants.push({
             name,

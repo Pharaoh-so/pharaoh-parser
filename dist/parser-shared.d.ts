@@ -34,4 +34,10 @@ export declare function countParams(node: SyntaxNode, paramTypes: string[], excl
  * @returns Cyclomatic complexity score (base 1).
  */
 export declare function computeComplexity(node: SyntaxNode, complexityTypes: Set<string>, detectOperator: (n: SyntaxNode) => boolean): number;
+/**
+ * Secret-like name suffix pattern — constants whose names end with these
+ * segments (after `_` or as the full name) are skipped to prevent accidental
+ * credential storage in the knowledge graph. Defense-in-depth measure.
+ */
+export declare const SECRET_NAME_SUFFIX: RegExp;
 //# sourceMappingURL=parser-shared.d.ts.map
