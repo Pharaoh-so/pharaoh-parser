@@ -27,7 +27,16 @@ const SOURCE_EXTENSIONS = new Set([
     ".py",
     ".vue",
 ]);
+/**
+ * File extensions read as C or C++, lower-case. Walked only on request (see
+ * walkFiles): a caller that has no C/C++ parser must not be handed these files.
+ */
+export const C_CPP_EXTENSIONS = new Set([
+    ...[".c", ".h"],
+    ...[".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".ipp", ".inl"],
+]);
 const JS_EXT = "(?:[cm]?[jt]sx?)";
+const C_EXT = "(?:c|cc|cpp|cxx)";
 const TEST_PATH_RE = new RegExp([
     // x.test.ts, x.spec.tsx, x.test.mts, and NestJS's app.e2e-spec.ts
     // (not any "-spec"/"-test" suffix: ab-test.ts, openapi-spec.ts are code)
@@ -46,6 +55,9 @@ const TEST_PATH_RE = new RegExp([
     "(?:^|/)test_[^/]*\\.py$",
     "_test\\.py$",
     "(?:^|/)conftest\\.py$",
+    // C and C++: x_test.cc, x_unittest.cpp, test_x.c
+    `_(?:test|unittest)\\.${C_EXT}$`,
+    `(?:^|/)test_[^/]*\\.${C_EXT}$`,
     // Storybook
     "\\.stories\\.(?:ts|tsx)$",
 ].join("|"), "i");
@@ -53,7 +65,13 @@ const TEST_PATH_RE = new RegExp([
 export function isTestFile(filePath) {
     return TEST_PATH_RE.test(filePath);
 }
-export function walkFiles(repoRoot) {
+/**
+ * Lists a repository's source files, skipping ignored directories.
+ * @param repoRoot - The repository's root directory
+ * @param options - `cpp: true` also lists C and C++ files (see C_CPP_EXTENSIONS)
+ * @returns Each file's native and repo-relative path
+ */
+export function walkFiles(repoRoot, options = {}) {
     const ig = ignore();
     // Load .gitignore if present
     const gitignorePath = path.join(repoRoot, ".gitignore");
@@ -64,10 +82,10 @@ export function walkFiles(repoRoot) {
     // Add hardcoded ignores
     ig.add(HARDCODED_IGNORES);
     const results = [];
-    walkDir(repoRoot, repoRoot, ig, results);
+    walkDir(repoRoot, repoRoot, ig, results, options.cpp ?? false);
     return results;
 }
-function walkDir(dir, repoRoot, ig, results) {
+function walkDir(dir, repoRoot, ig, results, cpp) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
         const absolutePath = path.join(dir, entry.name);
@@ -82,10 +100,11 @@ function walkDir(dir, repoRoot, ig, results) {
             continue;
         }
         if (entry.isDirectory()) {
-            walkDir(absolutePath, repoRoot, ig, results);
+            walkDir(absolutePath, repoRoot, ig, results, cpp);
         }
         else if (entry.isFile() &&
-            SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+            (SOURCE_EXTENSIONS.has(path.extname(entry.name)) ||
+                (cpp && C_CPP_EXTENSIONS.has(path.extname(entry.name).toLowerCase())))) {
             results.push({ absolutePath, relativePath });
         }
     }

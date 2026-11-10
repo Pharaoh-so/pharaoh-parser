@@ -114,6 +114,14 @@ Learn more at [pharaoh.so](https://pharaoh.so).
 - **Vue** single-file components (.vue): blocks and template via [@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc), `<script>` and `<script setup>` via tree-sitter-typescript at their line numbers in the .vue file. Composition API and Options API.
 - **Python** (.py) via [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 
+### C and C++ (experimental)
+
+`pharaoh-parser/cpp` reads `.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hh`, `.hpp`, `.hxx`, `.ipp` and `.inl` files with [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) and [tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp), finding definitions with each grammar's own `tags.scm` query. Pharaoh's hosted mapping does not use it yet, and `walkFiles` lists these files only when called with `{ cpp: true }`.
+
+It extracts function and method definitions (including `A::f` defined outside its class, overloads, constructors, destructors and operators), classes, structs and unions with their bases and method names, `#include` lines, a header's prototypes as its exports, and short object-like macros as constants. It does not extract calls.
+
+Nothing is preprocessed. Both branches of an `#if` are read, and a macro the grammar cannot read as C leaves a syntax error in the tree: the file still returns what was found around it, and the function that macro would declare is missing. On four public repositories, files with at least one such error ranged from 25% (leveldb) to 53% (fmt), covering 0.1% to 21% of their text; attribute and annotation macros such as `GUARDED_BY(mu)` are the usual cause.
+
 ## Dependencies
 
 | Package | Purpose |
@@ -121,6 +129,7 @@ Learn more at [pharaoh.so](https://pharaoh.so).
 | `web-tree-sitter` | WASM-based parser runtime |
 | `tree-sitter-typescript` | TypeScript/TSX grammar |
 | `tree-sitter-python` | Python grammar |
+| `tree-sitter-c`, `tree-sitter-cpp` | C and C++ grammars (loaded only by `pharaoh-parser/cpp`) |
 | `@vue/compiler-sfc` | Vue's own .vue parser: script blocks and the template AST (loaded only when a repo has .vue files) |
 | `ignore` | .gitignore pattern matching |
 

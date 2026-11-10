@@ -84,3 +84,11 @@ export function computeComplexity(
 	walk(node);
 	return complexity;
 }
+
+/**
+ * Secret-like name suffix pattern — constants whose names end with these
+ * segments (after `_` or as the full name) are skipped to prevent accidental
+ * credential storage in the knowledge graph. Defense-in-depth measure.
+ */
+export const SECRET_NAME_SUFFIX =
+	/(?:^|_)(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)$/i;

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import type { ScriptSource } from "./embedded-script.js";
 import {
 	type OnTree,
+	SECRET_NAME_SUFFIX,
 	computeBodyHash as computeBodyHashShared,
 	computeComplexity as computeComplexityShared,
 	countParams as countParamsShared,
@@ -72,13 +73,6 @@ const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 
 /** Max length for extractable scalar constant values. */
 const MAX_CONSTANT_VALUE_LENGTH = 128;
-
-/**
- * Secret-like name suffix pattern — constants whose names end with these
- * segments (after `_` or as the full name) are skipped to prevent accidental
- * credential storage in the knowledge graph. Defense-in-depth measure.
- */
-const SECRET_NAME_SUFFIX = /(?:^|_)(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)$/i;
 
 /**
  * Extract top-level const declarations from the program root.
