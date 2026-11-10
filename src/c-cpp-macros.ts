@@ -421,8 +421,8 @@ export function blankMacros(
 
 /**
  * Which columns of one line sit inside a string or character literal or a
- * comment. A block comment opened on an earlier line isn't seen: blanking a
- * name inside one changes no code.
+ * comment. Per line only: a block comment or raw string opened on an earlier
+ * line isn't seen (blanking a name there changes no code, only a body hash).
  */
 function literalColumns(line: string): boolean[] {
 	const inside = new Array<boolean>(line.length).fill(false);
@@ -436,6 +436,12 @@ function literalColumns(line: string): boolean[] {
 				i++;
 			} else if (ch === quote) quote = "";
 			continue;
+		}
+		if (ch === "'" && isWordChar(line[i - 1])) {
+			// `1'000` is a digit separator; `u8'x'`, `L'x'` open a literal
+			let start = i - 1;
+			while (start > 0 && isWordChar(line[start - 1])) start--;
+			if (/[0-9]/.test(line[start])) continue;
 		}
 		if (ch === '"' || ch === "'") {
 			quote = ch;

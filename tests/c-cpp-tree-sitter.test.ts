@@ -321,7 +321,11 @@ describe("C and C++ parser", () => {
 				new Set(["redisAtomic"]),
 			),
 		).toBe(`static ${" ".repeat(11)} int n;`);
-		// Text in a string, a character or a comment is never a macro
+		// Text in a string, a character or a comment on the same line isn't a macro;
+		// a digit separator opens no character literal
+		expect(blankMacros("int f(int n = 1'000) LOCKS_EXCLUDED(mu);", [0])).toBe(
+			`int f(int n = 1'000) ${" ".repeat(18)};`,
+		);
 		const literals =
 			'  log("x LUAI_FUNC y"); // FOO_BAR int\n  /* LIB_API int */ int z;';
 		expect(blankMacros(literals, [0, 1])).toBe(literals);
