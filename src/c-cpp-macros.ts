@@ -419,6 +419,38 @@ export function blankMacros(
 	return chars.join("");
 }
 
+/** Whether the `'` at `i` separates digits (`1'000`) rather than opening a literal (`u8'x'`, `L'x'`). */
+function digitSeparator(text: string, i: number): boolean {
+	if (text[i] !== "'" || !isWordChar(text[i - 1])) return false;
+	let start = i - 1;
+	while (start > 0 && isWordChar(text[start - 1])) start--;
+	return /[0-9]/.test(text[start]);
+}
+
+/**
+ * Whether the `)` at `close` ends a declarator's parameters, as far as one
+ * line shows: not inside a comment or literal, and not a condition's
+ * (`if (n)`, `for (...)`), whose next line is a statement.
+ */
+function declaratorParen(text: string, close: number): boolean {
+	const lineStart = text.lastIndexOf("\n", close) + 1;
+	const lineEnd = text.indexOf("\n", close);
+	const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+	if (literalColumns(line)[close - lineStart]) return false;
+	let depth = 0;
+	for (let i = close; i >= Math.max(0, close - MAX_ARGS_SPAN); i--) {
+		if (text[i] === ")") depth++;
+		else if (text[i] === "(" && --depth === 0) {
+			let w = i - 1;
+			while (w >= 0 && /\s/.test(text[w])) w--;
+			let start = w;
+			while (start >= 0 && isWordChar(text[start])) start--;
+			return !CONTROL_WORDS.has(text.slice(start + 1, w + 1));
+		}
+	}
+	return false;
+}
+
 /**
  * Which columns of one line sit inside a string or character literal or a
  * comment. Per line only: a block comment or raw string opened on an earlier
@@ -437,12 +469,7 @@ function literalColumns(line: string): boolean[] {
 			} else if (ch === quote) quote = "";
 			continue;
 		}
-		if (ch === "'" && isWordChar(line[i - 1])) {
-			// `1'000` is a digit separator; `u8'x'`, `L'x'` open a literal
-			let start = i - 1;
-			while (start > 0 && isWordChar(line[start - 1])) start--;
-			if (/[0-9]/.test(line[start])) continue;
-		}
+		if (digitSeparator(line, i)) continue;
 		if (ch === '"' || ch === "'") {
 			quote = ch;
 			inside[i] = true;
@@ -487,7 +514,7 @@ function blankNames(
 		if (before === "") {
 			let up = from - 1;
 			while (up >= 0 && /\s/.test(text[up])) up--;
-			if (text[up] === ")") before = ")";
+			if (text[up] === ")" && declaratorParen(text, up)) before = ")";
 		}
 		let beforeWord = "";
 		if (isWordChar(before)) {
@@ -563,6 +590,32 @@ function blankNames(
 }
 
 /**
+ * Where the directive in `[from, to)` opens a block comment it doesn't close,
+ * or -1. A `/*` inside a string, a character or a `//` comment opens nothing.
+ */
+function openComment(text: string, from: number, to: number): number {
+	let quote = "";
+	for (let i = from; i < to; i++) {
+		const ch = text[i];
+		if (quote) {
+			if (ch === "\\") i++;
+			else if (ch === quote || ch === "\n") quote = "";
+		} else if (ch === '"' || (ch === "'" && !digitSeparator(text, i))) {
+			quote = ch;
+		} else if (ch === "/" && text[i + 1] === "/") {
+			const end = text.indexOf("\n", i);
+			if (end === -1) return -1;
+			i = end;
+		} else if (ch === "/" && text[i + 1] === "*") {
+			const close = text.indexOf("*/", i + 2);
+			if (close === -1 || close + 2 > to) return i;
+			i = close + 1;
+		}
+	}
+	return -1;
+}
+
+/**
  * Read one branch of every conditional, as a compiler would: every directive
  * (conditionals, `#define` bodies, `#pragma`, `#include`) and every other
  * branch is blanked. The first branch is read, except that
@@ -623,11 +676,13 @@ export function firstBranches(text: string, dialect: "c" | "cpp"): string {
 			row = last;
 			// A block comment the directive opens and doesn't close (`#define X 1 /* a
 			// note that runs on`) goes with it: its rest is not code
-			const opened = text.lastIndexOf("/*", to - 1);
-			if (opened >= from && text.indexOf("*/", opened + 2) >= to) {
-				const close = text.indexOf("*/", to);
+			const close =
+				openComment(text, from, to) === -1 ? -1 : text.indexOf("*/", to);
+			if (close !== -1) {
 				blank(chars, to, close + 2);
 				while (row + 1 < starts.length - 1 && starts[row + 1] <= close) row++;
+				// The rest of the closing line belongs to the branch the directive is in
+				if (!reading()) blank(chars, close + 2, starts[row + 1]);
 			}
 			continue;
 		}
