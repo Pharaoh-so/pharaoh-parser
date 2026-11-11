@@ -190,9 +190,12 @@ export interface ParsedFile {
 	recovered?: boolean;
 	/**
 	 * C and C++ only, with `recovered`: the one-based lines whose text the
-	 * rewrite changed (a macro blanked, a branch or directive read past). On
-	 * every other line the rewritten tree holds the text as written, so a call
-	 * read there is read as in a file the grammar understood.
+	 * rewrite changed (a macro blanked, a branch or directive read past). Every
+	 * other line holds the text as written. That is all it promises: how a call
+	 * on an untouched line is read can still depend on rewritten lines (its
+	 * enclosing class or function may open on one) and on errors the recovered
+	 * tree still holds, so what is read there stays a candidate, as `recovered`
+	 * says. A consumer that draws more from untouched lines should measure it.
 	 */
 	rewrittenLines?: number[];
 }
