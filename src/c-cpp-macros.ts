@@ -614,6 +614,14 @@ export function firstBranches(text: string, dialect: "c" | "cpp"): string {
 			}
 			blank(chars, from, to);
 			row = last;
+			// A block comment the directive opens and doesn't close (`#define X 1 /* a
+			// note that runs on`) goes with it: its rest is not code
+			const opened = text.lastIndexOf("/*", to - 1);
+			if (opened >= from && text.indexOf("*/", opened + 2) >= to) {
+				const close = text.indexOf("*/", to);
+				blank(chars, to, close + 2);
+				while (row + 1 < starts.length - 1 && starts[row + 1] <= close) row++;
+			}
 			continue;
 		}
 		if (!reading()) blank(chars, from, to);
