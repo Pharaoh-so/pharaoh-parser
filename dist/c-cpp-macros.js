@@ -420,7 +420,16 @@ function blankNames(text, chars, from, to, wanted) {
         let back = start - 1;
         while (back >= from && /[ \t]/.test(text[back]))
             back--;
-        const before = back >= from ? text[back] : "";
+        let before = back >= from ? text[back] : "";
+        // First on its line after a declarator's `)` on the line before: a trailing
+        // attribute continued (`int f(const char *fmt, ...)` / `  PRINTF_ARGS(1, 2);`)
+        if (before === "") {
+            let up = from - 1;
+            while (up >= 0 && /\s/.test(text[up]))
+                up--;
+            if (text[up] === ")")
+                before = ")";
+        }
         let beforeWord = "";
         if (isWordChar(before)) {
             let w = back;
@@ -552,6 +561,15 @@ export function firstBranches(text, dialect) {
             }
             blank(chars, from, to);
             row = last;
+            // A block comment the directive opens and doesn't close (`#define X 1 /* a
+            // note that runs on`) goes with it: its rest is not code
+            const opened = text.lastIndexOf("/*", to - 1);
+            if (opened >= from && text.indexOf("*/", opened + 2) >= to) {
+                const close = text.indexOf("*/", to);
+                blank(chars, to, close + 2);
+                while (row + 1 < starts.length - 1 && starts[row + 1] <= close)
+                    row++;
+            }
             continue;
         }
         if (!reading())

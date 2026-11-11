@@ -481,7 +481,14 @@ function blankNames(
 		let prevWord = "";
 		let back = start - 1;
 		while (back >= from && /[ \t]/.test(text[back])) back--;
-		const before = back >= from ? text[back] : "";
+		let before = back >= from ? text[back] : "";
+		// First on its line after a declarator's `)` on the line before: a trailing
+		// attribute continued (`int f(const char *fmt, ...)` / `  PRINTF_ARGS(1, 2);`)
+		if (before === "") {
+			let up = from - 1;
+			while (up >= 0 && /\s/.test(text[up])) up--;
+			if (text[up] === ")") before = ")";
+		}
 		let beforeWord = "";
 		if (isWordChar(before)) {
 			let w = back;

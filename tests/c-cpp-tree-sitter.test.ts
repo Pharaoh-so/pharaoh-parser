@@ -332,6 +332,19 @@ describe("C and C++ parser", () => {
 		const literals =
 			'  log("x LUAI_FUNC y"); // FOO_BAR int\n  /* LIB_API int */ int z;';
 		expect(blankMacros(literals, [0, 1])).toBe(literals);
+		// An attribute continued on the line after a declarator's `)`; a statement
+		// after `;` is left alone
+		expect(
+			blankMacros(
+				"int f(const char *fmt, ...)\n  PRINTF_ARGS(1, 2);\nfoo();\nBAR(1);",
+				[1, 3],
+			).split("\n"),
+		).toEqual([
+			"int f(const char *fmt, ...)",
+			`  ${" ".repeat(17)};`,
+			"foo();",
+			"BAR(1);",
+		]);
 		// One-line statements are not types or attributes: left as they are
 		const statements =
 			"if (!p) p = q;\nfor (;;) x = 1;\nif (done) return;\nwhile (n) n--;";
@@ -411,6 +424,13 @@ describe("C and C++ parser", () => {
 		expect(firstBranches(text, "c").split("\n")).toEqual(expected);
 		// In C++, `extern "C" {` is read
 		expect(firstBranches(text, "cpp").split("\n")[1]).toBe('extern "C" {');
+		// A comment a directive opens goes with the directive, through its `*/`
+		const note = "#define SEEK 2 /* fail, so\n   try again */\nint after;";
+		expect(firstBranches(note, "c").split("\n")).toEqual([
+			" ".repeat(26),
+			" ".repeat(15),
+			"int after;",
+		]);
 	});
 
 	it("reads template members, and takes neither local declarations nor code macros for definitions", () => {
