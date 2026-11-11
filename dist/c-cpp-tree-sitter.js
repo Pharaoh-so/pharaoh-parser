@@ -306,6 +306,7 @@ export function parseFile(absolutePath, relativePath, onTree, options = {}) {
             return parsed;
         }
         const merged = merge(parsed, read(rewritten.tree.rootNode, rewritten.text, relativePath, language), errorSpans(tree.rootNode), rewritten.text);
+        merged.rewrittenLines = changedLines(source, rewritten.text);
         onTree?.(rewritten.tree.rootNode, merged);
         return merged;
     }
@@ -313,6 +314,17 @@ export function parseFile(absolutePath, relativePath, onTree, options = {}) {
         tree.delete();
         rewritten?.tree.delete();
     }
+}
+/** One-based lines whose text differs between `source` and its same-length rewrite. */
+function changedLines(source, rewrittenText) {
+    const before = source.split("\n");
+    const after = rewrittenText.split("\n");
+    const changed = [];
+    for (let i = 0; i < before.length; i++) {
+        if (before[i] !== after[i])
+            changed.push(i + 1);
+    }
+    return changed;
 }
 /** Rounds that blank every error's lines at once, each on what the last left. */
 const MAX_ROUNDS = 3;
@@ -497,12 +509,12 @@ function merge(written, rewritten, errors, rewrittenText) {
     // `#else` branch), outside that read's errors. Where the text is still there,
     // the rewritten read is the one that understood it: a class head the read as
     // written missed turned its methods into free functions.
-    const rewrittenLines = rewrittenText.split("\n");
+    const rewrittenTextLines = rewrittenText.split("\n");
     // Every line blank, not just the first: a macro alone on the line above a
     // method (`FMT_CONSTEXPR20` / `int f() {`) is blanked too, and the method below
     // it is in the rewritten read already. The cost: an `#else` head sharing the
     // first branch's body (`void f() {` / `#else` / `void g() {`) isn't listed.
-    const keep = (item) => rewrittenLines
+    const keep = (item) => rewrittenTextLines
         .slice(item.lineStart - 1, item.lineEnd)
         .every((line) => line.trim() === "") &&
         !errors.some(([from, to]) => item.lineStart >= from && item.lineEnd <= to);

@@ -126,7 +126,7 @@ Nothing is preprocessed. A file is first read as written, both branches of every
 - blank an upper-case macro alone on its line;
 - read one branch of each conditional.
 
-Each rewrite keeps every line and column and is kept only if less of the file is then in error, within a per-file budget of text reparsed (`RECOVERY_BYTES`, 1 MB). What that read finds is marked `recovered: true`: it rests on guesses about what macros expand to, so calls read from it are candidates, never exact, and some can be missing. For such a file `onTree` receives the rewritten tree, which has no directives and none of the blanked branches' code, and whose `hasError` can be false: check `recovered || hasError`.
+Each rewrite keeps every line and column and is kept only if less of the file is then in error, within a per-file budget of text reparsed (`RECOVERY_BYTES`, 1 MB). What that read finds is marked `recovered: true`: it rests on guesses about what macros expand to, so calls read from it are candidates, never exact, and some can be missing. For such a file `onTree` receives the rewritten tree, which has no directives and none of the blanked branches' code, and whose `hasError` can be false: check `recovered || hasError`. `rewrittenLines` lists the lines the rewrite changed; every other line holds the text as written, though how it is read can still depend on rewritten lines around it.
 
 Files with at least one syntax error after recovery, on four public repositories (before recovery in brackets): curl 4.1% (27%), leveldb 6.8% (25%), redis 12.1% (47%, mostly vendored code under `deps/`), fmt 37.8% (53%).
 
