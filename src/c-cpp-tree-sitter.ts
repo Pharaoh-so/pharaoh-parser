@@ -379,12 +379,24 @@ export function parseFile(
 			errorSpans(tree.rootNode),
 			rewritten.text,
 		);
+		merged.rewrittenLines = changedLines(source, rewritten.text);
 		onTree?.(rewritten.tree.rootNode, merged);
 		return merged;
 	} finally {
 		tree.delete();
 		rewritten?.tree.delete();
 	}
+}
+
+/** One-based lines whose text differs between `source` and its same-length rewrite. */
+function changedLines(source: string, rewrittenText: string): number[] {
+	const before = source.split("\n");
+	const after = rewrittenText.split("\n");
+	const changed: number[] = [];
+	for (let i = 0; i < before.length; i++) {
+		if (before[i] !== after[i]) changed.push(i + 1);
+	}
+	return changed;
 }
 
 /** A rewritten text and its tree, which the caller deletes. */

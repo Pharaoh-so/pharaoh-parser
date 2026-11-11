@@ -157,5 +157,12 @@ export interface ParsedFile {
      * and that tree's `hasError` can be false). Check `recovered || hasError`.
      */
     recovered?: boolean;
+    /**
+     * C and C++ only, with `recovered`: the one-based lines whose text the
+     * rewrite changed (a macro blanked, a branch or directive read past). On
+     * every other line the rewritten tree holds the text as written, so a call
+     * read there is read as in a file the grammar understood.
+     */
+    rewrittenLines?: number[];
 }
 //# sourceMappingURL=types.d.ts.map

@@ -306,6 +306,7 @@ export function parseFile(absolutePath, relativePath, onTree, options = {}) {
             return parsed;
         }
         const merged = merge(parsed, read(rewritten.tree.rootNode, rewritten.text, relativePath, language), errorSpans(tree.rootNode), rewritten.text);
+        merged.rewrittenLines = changedLines(source, rewritten.text);
         onTree?.(rewritten.tree.rootNode, merged);
         return merged;
     }
@@ -313,6 +314,17 @@ export function parseFile(absolutePath, relativePath, onTree, options = {}) {
         tree.delete();
         rewritten?.tree.delete();
     }
+}
+/** One-based lines whose text differs between `source` and its same-length rewrite. */
+function changedLines(source, rewrittenText) {
+    const before = source.split("\n");
+    const after = rewrittenText.split("\n");
+    const changed = [];
+    for (let i = 0; i < before.length; i++) {
+        if (before[i] !== after[i])
+            changed.push(i + 1);
+    }
+    return changed;
 }
 /** Rounds that blank every error's lines at once, each on what the last left. */
 const MAX_ROUNDS = 3;

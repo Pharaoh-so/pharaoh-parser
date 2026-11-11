@@ -137,6 +137,8 @@ describe("C and C++ parser", () => {
 		// read as a function, and no name is invented for it
 		expect(hasError).toBe(false);
 		expect(parsed.recovered).toBe(true);
+		// Only `API`'s line was rewritten: every other line reads as written
+		expect(parsed.rewrittenLines).toEqual([4]);
 		expect(functionsOf(parsed)).toEqual([
 			["api_call", "int api_call(void)", "4-4", 1, 0, true],
 			["platform", "int platform(void)", "11-11", 1, 0, true],
@@ -166,6 +168,7 @@ describe("C and C++ parser", () => {
 		expect(cpp.imports.map((i) => i.source)).toEqual(["recovery.h"]);
 		// A file the grammar reads as written is not marked
 		expect(parse("shape.cpp").recovered).toBeUndefined();
+		expect(parse("shape.cpp").rewrittenLines).toBeUndefined();
 		// No budget, no recovery: the read as written, errors and all
 		const unrecovered = parseFile(
 			path.join(DIR, "recovery.cpp"),
