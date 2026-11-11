@@ -356,6 +356,42 @@ export function blankMacros(text, rows, onlyKnown = false, repoMacros = NONE) {
     }
     return chars.join("");
 }
+/** Whether the `'` at `i` separates digits (`1'000`) rather than opening a literal (`u8'x'`, `L'x'`). */
+function digitSeparator(text, i) {
+    if (text[i] !== "'" || !isWordChar(text[i - 1]))
+        return false;
+    let start = i - 1;
+    while (start > 0 && isWordChar(text[start - 1]))
+        start--;
+    return /[0-9]/.test(text[start]);
+}
+/**
+ * Whether the `)` at `close` ends a declarator's parameters, as far as one
+ * line shows: not inside a comment or literal, and not a condition's
+ * (`if (n)`, `for (...)`), whose next line is a statement.
+ */
+function declaratorParen(text, close) {
+    const lineStart = text.lastIndexOf("\n", close) + 1;
+    const lineEnd = text.indexOf("\n", close);
+    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+    if (literalColumns(line)[close - lineStart])
+        return false;
+    let depth = 0;
+    for (let i = close; i >= Math.max(0, close - MAX_ARGS_SPAN); i--) {
+        if (text[i] === ")")
+            depth++;
+        else if (text[i] === "(" && --depth === 0) {
+            let w = i - 1;
+            while (w >= 0 && /\s/.test(text[w]))
+                w--;
+            let start = w;
+            while (start >= 0 && isWordChar(text[start]))
+                start--;
+            return !CONTROL_WORDS.has(text.slice(start + 1, w + 1));
+        }
+    }
+    return false;
+}
 /**
  * Which columns of one line sit inside a string or character literal or a
  * comment. Per line only: a block comment or raw string opened on an earlier
@@ -376,14 +412,8 @@ function literalColumns(line) {
                 quote = "";
             continue;
         }
-        if (ch === "'" && isWordChar(line[i - 1])) {
-            // `1'000` is a digit separator; `u8'x'`, `L'x'` open a literal
-            let start = i - 1;
-            while (start > 0 && isWordChar(line[start - 1]))
-                start--;
-            if (/[0-9]/.test(line[start]))
-                continue;
-        }
+        if (digitSeparator(line, i))
+            continue;
         if (ch === '"' || ch === "'") {
             quote = ch;
             inside[i] = true;
@@ -420,7 +450,16 @@ function blankNames(text, chars, from, to, wanted) {
         let back = start - 1;
         while (back >= from && /[ \t]/.test(text[back]))
             back--;
-        const before = back >= from ? text[back] : "";
+        let before = back >= from ? text[back] : "";
+        // First on its line after a declarator's `)` on the line before: a trailing
+        // attribute continued (`int f(const char *fmt, ...)` / `  PRINTF_ARGS(1, 2);`)
+        if (before === "") {
+            let up = from - 1;
+            while (up >= 0 && /\s/.test(text[up]))
+                up--;
+            if (text[up] === ")" && declaratorParen(text, up))
+                before = ")";
+        }
         let beforeWord = "";
         if (isWordChar(before)) {
             let w = back;
@@ -493,6 +532,38 @@ function blankNames(text, chars, from, to, wanted) {
     }
 }
 /**
+ * Where the directive in `[from, to)` opens a block comment it doesn't close,
+ * or -1. A `/*` inside a string, a character or a `//` comment opens nothing.
+ */
+function openComment(text, from, to) {
+    let quote = "";
+    for (let i = from; i < to; i++) {
+        const ch = text[i];
+        if (quote) {
+            if (ch === "\\")
+                i++;
+            else if (ch === quote || ch === "\n")
+                quote = "";
+        }
+        else if (ch === '"' || (ch === "'" && !digitSeparator(text, i))) {
+            quote = ch;
+        }
+        else if (ch === "/" && text[i + 1] === "/") {
+            const end = text.indexOf("\n", i);
+            if (end === -1)
+                return -1;
+            i = end;
+        }
+        else if (ch === "/" && text[i + 1] === "*") {
+            const close = text.indexOf("*/", i + 2);
+            if (close === -1 || close + 2 > to)
+                return i;
+            i = close + 1;
+        }
+    }
+    return -1;
+}
+/**
  * Read one branch of every conditional, as a compiler would: every directive
  * (conditionals, `#define` bodies, `#pragma`, `#include`) and every other
  * branch is blanked. The first branch is read, except that
@@ -552,6 +623,17 @@ export function firstBranches(text, dialect) {
             }
             blank(chars, from, to);
             row = last;
+            // A block comment the directive opens and doesn't close (`#define X 1 /* a
+            // note that runs on`) goes with it: its rest is not code
+            const close = openComment(text, from, to) === -1 ? -1 : text.indexOf("*/", to);
+            if (close !== -1) {
+                blank(chars, to, close + 2);
+                while (row + 1 < starts.length - 1 && starts[row + 1] <= close)
+                    row++;
+                // The rest of the closing line belongs to the branch the directive is in
+                if (!reading())
+                    blank(chars, close + 2, starts[row + 1]);
+            }
             continue;
         }
         if (!reading())
