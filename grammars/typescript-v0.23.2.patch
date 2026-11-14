@@ -1,5 +1,5 @@
 diff --git a/common/define-grammar.js b/common/define-grammar.js
-index efb0b76..e17a3b2 100644
+index efb0b76..f084f30 100644
 --- a/common/define-grammar.js
 +++ b/common/define-grammar.js
 @@ -16,6 +16,7 @@ module.exports = function defineGrammar(dialect) {
@@ -62,7 +62,35 @@ index efb0b76..e17a3b2 100644
        )),
 
        assignment_expression: $ => prec.right('assign', seq(
-@@ -1055,7 +1064,13 @@ module.exports = function defineGrammar(dialect) {
+@@ -818,6 +827,8 @@ module.exports = function defineGrammar(dialect) {
+         field('name', choice(
+           $._type_identifier,
+           $.nested_type_identifier,
++          // An import type's member: import('x').Foo<T>
++          prec(-1, alias($._type_query_member_expression_in_type_annotation, $.member_expression)),
+         )),
+         field('type_arguments', $.type_arguments),
+       )),
+@@ -897,13 +908,14 @@ module.exports = function defineGrammar(dialect) {
+         ),
+       )),
+
+-      index_type_query: $ => seq(
++      index_type_query: $ => prec.right(seq(
+         'keyof',
+-        $.primary_type,
+-      ),
++        // keyof binds tighter than & and |: keyof import('x').A & B is (keyof A) & B.
++        choice($.primary_type, alias($._type_query_member_expression_in_type_annotation, $.member_expression)),
++      )),
+
+       lookup_type: $ => seq(
+-        $.primary_type,
++        choice($.primary_type, prec(-1, alias($._type_query_member_expression_in_type_annotation, $.member_expression))),
+         '[',
+         $.type,
+         ']',
+@@ -1055,7 +1067,13 @@ module.exports = function defineGrammar(dialect) {
          )),
        ),
 

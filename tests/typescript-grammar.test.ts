@@ -108,6 +108,38 @@ describe.each([
 		});
 	});
 
+	it("composes import types with type arguments, indexes and keyof", () => {
+		const imports = fileURLToPath(
+			new URL("fixtures/typescript-grammar/import-types.ts", import.meta.url),
+		);
+		const result = parseFile(imports, `import-types.${extension}`, (root) => {
+			expect(root.hasError).toBe(false);
+			const generics = root.descendantsOfType("generic_type");
+			expect(
+				generics.map((node) => node.childForFieldName("name")?.text),
+			).toEqual([
+				"Promise",
+				'import("./harness").WorkerResult',
+				'import("./map").Pair',
+				'import("./map").Pair',
+			]);
+			expect(generics[1]?.childForFieldName("name")?.type).toBe(
+				"member_expression",
+			);
+			const lookups = root.descendantsOfType("lookup_type");
+			expect(lookups.map((node) => node.firstNamedChild?.text)).toEqual([
+				'import("./map").MapResult',
+				'import("./map").Pair<string, number>',
+			]);
+			const [keyof] = root.descendantsOfType("index_type_query");
+			expect(keyof?.parent?.type).toBe("intersection_type");
+			expect(keyof?.firstNamedChild?.text).toBe('import("./map").MapResult');
+		});
+		expect(result.functions.map((fn) => fn.signature)).toEqual([
+			'function fork(\n\tmsg: import("./worker").Request,\n): Promise<import("./harness").WorkerResult<import("./worker").Payload>>',
+		]);
+	});
+
 	it("reports genuinely malformed TypeScript", () => {
 		const parser = new Parser();
 		parser.setLanguage(language);
