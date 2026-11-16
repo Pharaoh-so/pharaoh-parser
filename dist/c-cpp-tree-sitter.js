@@ -98,7 +98,11 @@ const C_COMPLEXITY = {
     // A fold expression (`(xs && ...)`) short-circuits like a binary one.
     tokens: {
         types: new Set([...SHORT_CIRCUIT, "case"]),
-        parents: new Set(["binary_expression", "fold_expression", "case_statement"]),
+        parents: new Set([
+            "binary_expression",
+            "fold_expression",
+            "case_statement",
+        ]),
     },
 };
 const PARAMETER_TYPES = [
