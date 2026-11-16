@@ -11,7 +11,7 @@ Open-source AST parser used by [Pharaoh](https://pharaoh.so) to extract structur
 | Function names | `authenticateUser` |
 | Function signatures | `async function authenticateUser(email: string, password: string): Promise<User>` |
 | Line numbers | `lineStart: 15, lineEnd: 48` |
-| Complexity scores | `complexity: 7` (cyclomatic) |
+| Complexity scores | `cc: 7`, each function's own cyclomatic complexity under one rule for every language, and a file's `excess` over 10 ([how they're counted](docs/complexity.md)) |
 | Export status | `isExported: true` |
 | Import statements | `{ source: "./db", symbols: ["findUser"] }` |
 | Class names and methods | `{ name: "UserService", methods: ["create", "delete"] }` |

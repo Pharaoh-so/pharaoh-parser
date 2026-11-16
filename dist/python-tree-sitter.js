@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, } from "./parser-shared.js";
+import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser, pyLanguage } from "./wasm-init.js";
 const pyParser = new Parser();
@@ -18,6 +18,30 @@ const COMPLEXITY_TYPES = new Set([
 ]);
 // Boolean operators that add complexity branches
 const COMPLEXITY_OPERATORS = new Set(["and", "or"]);
+/**
+ * The shared complexity rule for Python (docs/complexity.md): `try`, `with`,
+ * `match` and `else` add nothing; each handler, `case`, conditional
+ * expression, comprehension `for` and `if`, and `and`/`or` adds one. A
+ * nested `def` or a `lambda` is its own scope.
+ */
+const PY_COMPLEXITY = {
+    decisions: new Set([
+        "if_statement",
+        "elif_clause",
+        "for_statement",
+        "while_statement",
+        "except_clause",
+        "except_group_clause",
+        "case_clause",
+        "conditional_expression",
+        "for_in_clause",
+        "if_clause",
+        "boolean_operator",
+    ]),
+    scopes: new Set(["function_definition", "lambda"]),
+};
+/** The file being parsed: each scope's own complexity from one walk, set by parseFile around extraction. */
+let fileCc = null;
 /**
  * Parses a Python file into its structural metadata.
  * @param absolutePath - The file to read
@@ -41,12 +65,20 @@ export function parseFile(absolutePath, relativePath, onTree) {
         const exports = [];
         // Extract __all__ for export detection
         const allNames = extractDunderAll(tree.rootNode);
-        extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
+        const complexity = fileComplexity(tree.rootNode, PY_COMPLEXITY);
+        fileCc = complexity;
+        try {
+            extractFromNode(tree.rootNode, source, functions, classes, imports, exports, allNames);
+        }
+        finally {
+            fileCc = null;
+        }
         const parsed = {
             path: relativePath,
             language: "python",
             loc: lines.length,
             functions,
+            excess: complexity.excess,
             classes,
             imports,
             exports,
@@ -157,6 +189,7 @@ function extractFunction(node, _source, functions, exports, allNames, className,
         lineEnd: node.endPosition.row + 1,
         loc: node.endPosition.row - node.startPosition.row + 1,
         complexity: computeComplexity(node),
+        cc: fileCc?.ccAt.get(node.startIndex) ?? ownComplexity(node, PY_COMPLEXITY),
         isExported,
         isAsync,
         className,

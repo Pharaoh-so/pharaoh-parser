@@ -21,6 +21,13 @@ export interface ParsedFunction {
     propsType?: string;
     /** Curated intrinsic HTML elements found in JSX (e.g. ["button", "input"]). */
     jsxIntrinsics?: string[];
+    /**
+     * Own cyclomatic complexity under the shared rule (docs/complexity.md):
+     * this function's control flow only, the same for every language. Set by
+     * every parseFile. `complexity` is the original count (the whole body,
+     * nested functions too, and `else` in TS/JS), kept unchanged for existing readers.
+     */
+    cc?: number;
 }
 export interface ParsedClass {
     name: string;
@@ -139,6 +146,8 @@ export interface ParsedFile {
     language: "typescript" | "tsx" | "python" | "javascript" | "jsx" | "vue" | "c" | "cpp";
     loc: number;
     functions: ParsedFunction[];
+    /** How far the file's function scopes, named or anonymous, are over complexity 10, summed (docs/complexity.md). Set by every parseFile. */
+    excess?: number;
     classes: ParsedClass[];
     imports: ParsedImport[];
     exports: ParsedExport[];
