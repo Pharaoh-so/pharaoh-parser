@@ -23,7 +23,7 @@ import path from "node:path";
 import { Language, Query } from "web-tree-sitter";
 import { blankMacros, firstBranches } from "./c-cpp-macros.js";
 export { collectAttributeMacros } from "./c-cpp-macros.js";
-import { SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { COMPLEXITY_THRESHOLD, SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser } from "./wasm-init.js";
 export { C_CPP_EXTENSIONS } from "./file-walker.js";
@@ -95,8 +95,11 @@ const C_COMPLEXITY = {
     ]),
     scopes: new Set(["function_definition", "lambda_expression"]),
     // `case` counts, `default` doesn't: both are keywords of a case_statement.
-    tokens: new Set([...SHORT_CIRCUIT, "case"]),
-    tokenParents: new Set(["binary_expression", "case_statement"]),
+    // A fold expression (`(xs && ...)`) short-circuits like a binary one.
+    tokens: {
+        types: new Set([...SHORT_CIRCUIT, "case"]),
+        parents: new Set(["binary_expression", "fold_expression", "case_statement"]),
+    },
 };
 const PARAMETER_TYPES = [
     "parameter_declaration",
@@ -574,6 +577,10 @@ function merge(written, rewritten, errors, rewrittenText) {
     return {
         ...rewritten,
         functions,
+        // The restored functions are in no scope the rewritten read walked.
+        // (A lambda inside one isn't a listed function, so it isn't added.)
+        excess: (rewritten.excess ?? 0) +
+            extraFns.reduce((sum, fn) => sum + Math.max(0, (fn.cc ?? 1) - COMPLEXITY_THRESHOLD), 0),
         classes,
         exports: [...rewritten.exports, ...restoredExports],
         imports: written.imports,

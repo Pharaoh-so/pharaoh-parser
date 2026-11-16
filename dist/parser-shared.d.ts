@@ -44,10 +44,13 @@ export interface ComplexityRules {
     decisions: ReadonlySet<string>;
     /** Node types that open their own function scope: what's inside counts for them, not for the function around them. */
     scopes: ReadonlySet<string>;
-    /** Operator and keyword tokens that each add one (`&&`, `??`, C's `case`), counted only inside a node of a `tokenParents` type. */
-    tokens?: ReadonlySet<string>;
-    /** The node types a counted token must sit directly in (a binary expression, not C++'s `int&& x`). */
-    tokenParents?: ReadonlySet<string>;
+    /** Operator and keyword tokens that each add one (`&&`, `??`, C's `case`). */
+    tokens?: {
+        /** The token types. */
+        types: ReadonlySet<string>;
+        /** The node types a counted token must sit directly in (a binary expression, not C++'s `int&& x`). */
+        parents: ReadonlySet<string>;
+    };
 }
 /** A function scope over this complexity is over by the difference (its excess). */
 export declare const COMPLEXITY_THRESHOLD = 10;

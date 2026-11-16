@@ -1,6 +1,6 @@
 # How complexity is counted
 
-Every parser reports two complexity measures under one shared rule. The same logic gets the same number in TypeScript, JavaScript, Python, C and C++. The values below are checked by `tests/complexity.test.ts`.
+Every parser reports two complexity measures under one shared rule. The same logic gets the same number in TypeScript, JavaScript, Python, C and C++, apart from the few choices under [Where the languages still differ](#where-the-languages-still-differ). The values below are checked by `tests/complexity.test.ts`.
 
 | Field | What it is |
 |---|---|
@@ -30,12 +30,21 @@ A function scope is any function form: a declaration, a method, an arrow functio
 | Each `catch` / `except` handler | +1 | +1 (`except`, `except*`) | +1 |
 | `try`, `finally`, `with` | 0 | 0 | 0 |
 | Conditional expression | +1 (`a ? b : c`) | +1 (`b if a else c`) | +1 (`a ? b : c`) |
-| Short-circuit operator | +1 each `&&` `\|\|` `??` | +1 each `and` `or` | +1 each `&&` `\|\|` |
+| Short-circuit operator | +1 each `&&` `\|\|` `??` | +1 each `and` `or` | +1 each `&&` `\|\|` (`and` `or`, and in a fold expression); not the `&&` of an rvalue reference |
 | Short-circuit assignment | +1 each `&&=` `\|\|=` `??=` | | |
 | Comprehension clause | | +1 each `for` and `if` | |
 | Optional chaining `?.` | 0 | | |
 
 A chain like `a && b && c` adds two, one per operator.
+
+## Where the languages still differ
+
+These are choices, kept so each rule stays one line:
+
+- **Python `match`**: every `case` adds one, including the wildcard `case _` (TS/C `default:` adds nothing). `case 1 | 2:` adds one where `case 1: case 2:` adds two, and a guard (`case x if y:`) adds one more.
+- **Python defaults and annotations** count toward the function they belong to, though Python evaluates them once, when the function is defined.
+- **C/C++ preprocessor conditions**: an `&&` or `||` in an `#if` inside a function body counts, as do those in a `static_assert` or `noexcept` condition.
+- **Recovered C/C++ files** (`recovered: true`): a function restored from an `#else` branch counts toward `excess`, but a lambda inside it doesn't.
 
 ## Example
 

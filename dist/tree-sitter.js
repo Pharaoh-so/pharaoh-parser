@@ -50,11 +50,10 @@ const TS_COMPLEXITY = {
         "arrow_function",
         "method_definition",
     ]),
-    tokens: new Set([...COMPLEXITY_OPERATORS, ...SHORT_CIRCUIT_ASSIGNMENTS]),
-    tokenParents: new Set([
-        "binary_expression",
-        "augmented_assignment_expression",
-    ]),
+    tokens: {
+        types: new Set([...COMPLEXITY_OPERATORS, ...SHORT_CIRCUIT_ASSIGNMENTS]),
+        parents: new Set(["binary_expression", "augmented_assignment_expression"]),
+    },
 };
 /**
  * The file being parsed: each scope's own complexity from one walk, set by

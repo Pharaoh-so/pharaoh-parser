@@ -25,6 +25,7 @@ import { blankMacros, firstBranches } from "./c-cpp-macros.js";
 
 export { collectAttributeMacros } from "./c-cpp-macros.js";
 import {
+	COMPLEXITY_THRESHOLD,
 	type ComplexityRules,
 	type OnTree,
 	SECRET_NAME_SUFFIX,
@@ -126,8 +127,11 @@ const C_COMPLEXITY: ComplexityRules = {
 	]),
 	scopes: new Set(["function_definition", "lambda_expression"]),
 	// `case` counts, `default` doesn't: both are keywords of a case_statement.
-	tokens: new Set([...SHORT_CIRCUIT, "case"]),
-	tokenParents: new Set(["binary_expression", "case_statement"]),
+	// A fold expression (`(xs && ...)`) short-circuits like a binary one.
+	tokens: {
+		types: new Set([...SHORT_CIRCUIT, "case"]),
+		parents: new Set(["binary_expression", "fold_expression", "case_statement"]),
+	},
 };
 
 const PARAMETER_TYPES = [
@@ -704,6 +708,14 @@ function merge(
 	return {
 		...rewritten,
 		functions,
+		// The restored functions are in no scope the rewritten read walked.
+		// (A lambda inside one isn't a listed function, so it isn't added.)
+		excess:
+			(rewritten.excess ?? 0) +
+			extraFns.reduce(
+				(sum, fn) => sum + Math.max(0, (fn.cc ?? 1) - COMPLEXITY_THRESHOLD),
+				0,
+			),
 		classes,
 		exports: [...rewritten.exports, ...restoredExports],
 		imports: written.imports,

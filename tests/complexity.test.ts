@@ -75,9 +75,11 @@ describe("cc: TypeScript and JavaScript", () => {
 			"function f(xs) { const ys = xs.map((x) => x); return ys.length > 0 ? ys : xs; }",
 			2,
 		],
+		["a method", "class A { f(a) { return a ? 1 : 2; } }", 2],
+		["an arrow binding", "const f = (a) => (a ? 1 : 2);", 2],
 		[
-			"a method and an arrow binding",
-			"class A { f(a) { return a ? 1 : 2; } }",
+			"a class field holding a function",
+			"class A { f = (a) => (a ? 1 : 2); }",
 			2,
 		],
 	])("%s", (_, code, expected) => {
@@ -182,8 +184,40 @@ describe("cc: C and C++", () => {
 			"int f(int a) { auto g = [](int x) { return x ? 1 : 0; }; return g(a); }\n",
 			1,
 		],
+		[
+			".cpp",
+			"`and` counts, an rvalue reference's && doesn't",
+			"int f(int&& a, bool b, bool c) { return b and c; }\n",
+			2,
+		],
+		[
+			".cpp",
+			"a fold expression's &&",
+			"template <class... T> bool f(T... xs) { return (xs && ...); }\n",
+			2,
+		],
 	])("%s %s", (ext, _, code, expected) => {
 		expect(ccOf(ext, code)).toBe(expected);
+	});
+
+	it("counts a function restored from an #else branch in a recovered file's excess", () => {
+		// `run`'s braces split across branches, so the file is read again with each
+		// #if's first branch; posix_only, in the #else, comes back from the read as written.
+		const decisions = Array.from(
+			{ length: 14 },
+			(_, i) => `if (a == ${i}) return ${i};`,
+		).join(" ");
+		const parsed = parse(
+			".cpp",
+			`#ifdef _WIN32\nint win_only() { return 1; }\n#else\nint posix_only(int a) { ${decisions} return 2; }\n#endif\n\nint run(int fd) {\n#ifdef _WIN32\n  if (fd == 0) {\n#else\n  if (fd < 0) {\n#endif\n    return -1;\n  }\n  return fd;\n}\n`,
+		);
+		expect(parsed.recovered).toBe(true);
+		expect(parsed.functions.map((fn) => [fn.name, fn.cc])).toEqual([
+			["win_only", 1],
+			["posix_only", 15],
+			["run", 2],
+		]);
+		expect(parsed.excess).toBe(5);
 	});
 });
 
@@ -236,6 +270,12 @@ describe("excess: each scope's distance over 10, summed per file", () => {
 		expect(
 			parse(".ts", `function big(a) { ${ifs(19)} }\n${trivial}`).excess,
 		).toBe(10);
+	});
+
+	it("adds two nested scopes over 10 separately, and counts no module-level code", () => {
+		const nested = `function host(a, xs) { ${ifs(14)} return xs.map((a) => { ${ifs(14)} }); }`;
+		expect(parse(".ts", nested).excess).toBe(10);
+		expect(parse(".ts", `const a = 1;\n${ifs(20)}`).excess).toBe(0);
 	});
 
 	it("is summed the same way in Python and C", () => {

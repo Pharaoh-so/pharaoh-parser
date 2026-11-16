@@ -94,8 +94,8 @@ function walkScopes(root, rules, close) {
                     counts[counts.length - 1]++;
                 }
             }
-            else if (rules.tokens?.has(type) &&
-                rules.tokenParents?.has(above[above.length - 1])) {
+            else if (rules.tokens?.types.has(type) &&
+                rules.tokens.parents.has(above[above.length - 1])) {
                 counts[counts.length - 1]++;
             }
             if (cursor.gotoFirstChild()) {
