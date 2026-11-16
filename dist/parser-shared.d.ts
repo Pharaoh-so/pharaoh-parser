@@ -35,6 +35,54 @@ export declare function countParams(node: SyntaxNode, paramTypes: string[], excl
  */
 export declare function computeComplexity(node: SyntaxNode, complexityTypes: Set<string>, detectOperator: (n: SyntaxNode) => boolean): number;
 /**
+ * How one language counts complexity under the shared rule (docs/complexity.md):
+ * 1, plus 1 per decision point, plus 1 per short-circuit operator, counted in
+ * a function's own control flow and never in a function nested inside it.
+ */
+export interface ComplexityRules {
+    /** Node types that each add one decision (a loop, an `if`, a handler, a conditional expression). */
+    decisions: ReadonlySet<string>;
+    /** Node types that open their own function scope: what's inside counts for them, not for the function around them. */
+    scopes: ReadonlySet<string>;
+    /** Operator and keyword tokens that each add one (`&&`, `??`, C's `case`). */
+    tokens?: {
+        /** The token types. */
+        types: ReadonlySet<string>;
+        /** The node types a counted token must sit directly in (a binary expression, not C++'s `int&& x`). */
+        parents: ReadonlySet<string>;
+    };
+}
+/** A function scope over this complexity is over by the difference (its excess). */
+export declare const COMPLEXITY_THRESHOLD = 10;
+/**
+ * A function's own cyclomatic complexity: 1 plus the decisions in its own
+ * control flow. A function nested inside it (named or not) is its own scope,
+ * so its decisions are never counted twice.
+ * @param scope - The function's node (one of `rules.scopes`)
+ * @param rules - The language's rules
+ * @returns 1 or more
+ */
+export declare function ownComplexity(scope: SyntaxNode, rules: ComplexityRules): number;
+/** A file's complexity from one walk (docs/complexity.md). */
+export interface FileComplexity {
+    /** Each function scope's own complexity, by the byte offset its node starts at. */
+    ccAt: ReadonlyMap<number, number>;
+    /**
+     * How far the file's scopes are over COMPLEXITY_THRESHOLD, summed: every
+     * scope counts, named or anonymous, extracted as a function or not, so
+     * naming an inline callback or adding small functions leaves it unchanged,
+     * while splitting a complex function lowers it.
+     */
+    excess: number;
+}
+/**
+ * Every function scope's own complexity in a file, and the file's excess,
+ * from one walk of its tree.
+ * @param root - The file's root node
+ * @param rules - The language's rules
+ */
+export declare function fileComplexity(root: SyntaxNode, rules: ComplexityRules): FileComplexity;
+/**
  * Secret-like name suffix pattern — constants whose names end with these
  * segments (after `_` or as the full name) are skipped to prevent accidental
  * credential storage in the knowledge graph. Defense-in-depth measure.

@@ -86,6 +86,139 @@ export function computeComplexity(
 }
 
 /**
+ * How one language counts complexity under the shared rule (docs/complexity.md):
+ * 1, plus 1 per decision point, plus 1 per short-circuit operator, counted in
+ * a function's own control flow and never in a function nested inside it.
+ */
+export interface ComplexityRules {
+	/** Node types that each add one decision (a loop, an `if`, a handler, a conditional expression). */
+	decisions: ReadonlySet<string>;
+	/** Node types that open their own function scope: what's inside counts for them, not for the function around them. */
+	scopes: ReadonlySet<string>;
+	/** Operator and keyword tokens that each add one (`&&`, `??`, C's `case`). */
+	tokens?: {
+		/** The token types. */
+		types: ReadonlySet<string>;
+		/** The node types a counted token must sit directly in (a binary expression, not C++'s `int&& x`). */
+		parents: ReadonlySet<string>;
+	};
+}
+
+/** A function scope over this complexity is over by the difference (its excess). */
+export const COMPLEXITY_THRESHOLD = 10;
+
+/**
+ * Walk `root` and everything under it once with a tree cursor, which makes no
+ * node objects: types alone decide what counts. Each function scope
+ * opened under `root` keeps its own count, and `close` receives it as the walk
+ * leaves the scope, so no decision is counted for two scopes.
+ * @returns The count for `root` itself: 1 plus the decisions outside every scope nested in it
+ */
+function walkScopes(
+	root: SyntaxNode,
+	rules: ComplexityRules,
+	close?: (cc: number, startIndex: number) => void,
+): number {
+	const cursor = root.walk();
+	const counts = [1];
+	// The depth and start of each open nested scope, innermost last.
+	const opened: number[] = [];
+	const starts: number[] = [];
+	// The types of the nodes above the cursor, for a token's parent.
+	const above: string[] = [];
+	let depth = 0;
+	try {
+		for (;;) {
+			const type = cursor.nodeType;
+			if (depth === 0) {
+				// The root is the scope being counted (or a file).
+			} else if (cursor.nodeIsNamed) {
+				// Named nodes only: a keyword token can share a scope's type name (`function`).
+				if (rules.scopes.has(type)) {
+					counts.push(1);
+					opened.push(depth);
+					starts.push(cursor.startIndex);
+				} else if (rules.decisions.has(type)) {
+					counts[counts.length - 1]++;
+				}
+			} else if (
+				rules.tokens?.types.has(type) &&
+				rules.tokens.parents.has(above[above.length - 1])
+			) {
+				counts[counts.length - 1]++;
+			}
+			if (cursor.gotoFirstChild()) {
+				above.push(type);
+				depth++;
+				continue;
+			}
+			// Leave nodes until one has a next sibling, closing scopes on the way out.
+			for (;;) {
+				if (opened.length > 0 && opened[opened.length - 1] === depth) {
+					opened.pop();
+					const cc = counts.pop() as number;
+					close?.(cc, starts.pop() as number);
+				}
+				if (depth === 0) return counts[0];
+				if (cursor.gotoNextSibling()) break;
+				cursor.gotoParent();
+				above.pop();
+				depth--;
+			}
+		}
+	} finally {
+		cursor.delete();
+	}
+}
+
+/**
+ * A function's own cyclomatic complexity: 1 plus the decisions in its own
+ * control flow. A function nested inside it (named or not) is its own scope,
+ * so its decisions are never counted twice.
+ * @param scope - The function's node (one of `rules.scopes`)
+ * @param rules - The language's rules
+ * @returns 1 or more
+ */
+export function ownComplexity(
+	scope: SyntaxNode,
+	rules: ComplexityRules,
+): number {
+	return walkScopes(scope, rules);
+}
+
+/** A file's complexity from one walk (docs/complexity.md). */
+export interface FileComplexity {
+	/** Each function scope's own complexity, by the byte offset its node starts at. */
+	ccAt: ReadonlyMap<number, number>;
+	/**
+	 * How far the file's scopes are over COMPLEXITY_THRESHOLD, summed: every
+	 * scope counts, named or anonymous, extracted as a function or not, so
+	 * naming an inline callback or adding small functions leaves it unchanged,
+	 * while splitting a complex function lowers it.
+	 */
+	excess: number;
+}
+
+/**
+ * Every function scope's own complexity in a file, and the file's excess,
+ * from one walk of its tree.
+ * @param root - The file's root node
+ * @param rules - The language's rules
+ */
+export function fileComplexity(
+	root: SyntaxNode,
+	rules: ComplexityRules,
+): FileComplexity {
+	const ccAt = new Map<number, number>();
+	let excess = 0;
+	walkScopes(root, rules, (cc, startIndex) => {
+		ccAt.set(startIndex, cc);
+		excess += Math.max(0, cc - COMPLEXITY_THRESHOLD);
+	});
+	return { ccAt, excess };
+}
+
+/**
  * Secret-like name suffix pattern — constants whose names end with these
  * segments (after `_` or as the full name) are skipped to prevent accidental
  * credential storage in the knowledge graph. Defense-in-depth measure.

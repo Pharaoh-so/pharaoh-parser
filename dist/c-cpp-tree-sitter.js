@@ -23,7 +23,7 @@ import path from "node:path";
 import { Language, Query } from "web-tree-sitter";
 import { blankMacros, firstBranches } from "./c-cpp-macros.js";
 export { collectAttributeMacros } from "./c-cpp-macros.js";
-import { SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, } from "./parser-shared.js";
+import { COMPLEXITY_THRESHOLD, SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser } from "./wasm-init.js";
 export { C_CPP_EXTENSIONS } from "./file-walker.js";
@@ -75,6 +75,36 @@ const COMPLEXITY_TYPES = new Set([
     "conditional_expression",
 ]);
 const isLogicalOperator = (node) => node.type === "&&" || node.type === "||";
+/** Short-circuit operators, including C++'s alternative spellings. */
+const SHORT_CIRCUIT = new Set(["&&", "||", "and", "or"]);
+/**
+ * The shared complexity rule for C and C++ (docs/complexity.md): `else` and
+ * `default:` add nothing; each `case`, handler, conditional expression and
+ * `&&`/`||` between operands adds one (not the `&&` of an rvalue reference).
+ * A lambda is its own scope.
+ */
+const C_COMPLEXITY = {
+    decisions: new Set([
+        "if_statement",
+        "for_statement",
+        "for_range_loop",
+        "while_statement",
+        "do_statement",
+        "catch_clause",
+        "conditional_expression",
+    ]),
+    scopes: new Set(["function_definition", "lambda_expression"]),
+    // `case` counts, `default` doesn't: both are keywords of a case_statement.
+    // A fold expression (`(xs && ...)`) short-circuits like a binary one.
+    tokens: {
+        types: new Set([...SHORT_CIRCUIT, "case"]),
+        parents: new Set([
+            "binary_expression",
+            "fold_expression",
+            "case_statement",
+        ]),
+    },
+};
 const PARAMETER_TYPES = [
     "parameter_declaration",
     "optional_parameter_declaration",
@@ -158,6 +188,7 @@ function baseNames(classNode) {
 /** Read one syntax tree of a file (as written, or rewritten) into a ParsedFile. */
 function read(root, source, relativePath, language) {
     const { query } = DIALECTS[language];
+    const complexity = fileComplexity(root, C_COMPLEXITY);
     const functions = [];
     const classes = [];
     const exports = [];
@@ -220,6 +251,8 @@ function read(root, source, relativePath, language) {
             lineEnd: owner.endPosition.row + 1,
             loc: owner.endPosition.row - owner.startPosition.row + 1,
             complexity: computeComplexity(body ?? owner, COMPLEXITY_TYPES, isLogicalOperator),
+            cc: complexity.ccAt.get(owner.startIndex) ??
+                ownComplexity(owner, C_COMPLEXITY),
             isExported,
             isAsync: false,
             ...(className ? { className } : {}),
@@ -256,6 +289,7 @@ function read(root, source, relativePath, language) {
         language,
         loc: source.split("\n").length,
         functions,
+        excess: complexity.excess,
         classes,
         imports: includes(root),
         exports,
@@ -547,6 +581,10 @@ function merge(written, rewritten, errors, rewrittenText) {
     return {
         ...rewritten,
         functions,
+        // The restored functions are in no scope the rewritten read walked.
+        // (A lambda inside one isn't a listed function, so it isn't added.)
+        excess: (rewritten.excess ?? 0) +
+            extraFns.reduce((sum, fn) => sum + Math.max(0, (fn.cc ?? 1) - COMPLEXITY_THRESHOLD), 0),
         classes,
         exports: [...rewritten.exports, ...restoredExports],
         imports: written.imports,

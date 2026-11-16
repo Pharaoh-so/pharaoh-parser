@@ -1,11 +1,15 @@
 import fs from "node:fs";
 import type { ScriptSource } from "./embedded-script.js";
 import {
+	type ComplexityRules,
+	type FileComplexity,
 	type OnTree,
 	SECRET_NAME_SUFFIX,
 	computeBodyHash as computeBodyHashShared,
 	computeComplexity as computeComplexityShared,
 	countParams as countParamsShared,
+	fileComplexity,
+	ownComplexity,
 } from "./parser-shared.js";
 import {
 	type ParsedClass,
@@ -60,6 +64,53 @@ const COMPLEXITY_TYPES = new Set([
 
 // Binary expression operators that add complexity
 const COMPLEXITY_OPERATORS = new Set(["&&", "||", "??"]);
+const SHORT_CIRCUIT_ASSIGNMENTS = new Set(["&&=", "||=", "??="]);
+
+/**
+ * The shared complexity rule for TypeScript and JavaScript (docs/complexity.md):
+ * `else` adds nothing, `default:` adds nothing, and each short-circuit operator
+ * (`&&` `||` `??`, and their assignments) adds one. Every function form is
+ * its own scope.
+ */
+const TS_COMPLEXITY: ComplexityRules = {
+	decisions: new Set([
+		"if_statement",
+		"switch_case",
+		"for_statement",
+		"for_in_statement",
+		"while_statement",
+		"do_statement",
+		"catch_clause",
+		"ternary_expression",
+	]),
+	scopes: new Set([
+		"function_declaration",
+		"generator_function_declaration",
+		"function_expression",
+		"function",
+		"generator_function",
+		"arrow_function",
+		"method_definition",
+	]),
+	tokens: {
+		types: new Set([...COMPLEXITY_OPERATORS, ...SHORT_CIRCUIT_ASSIGNMENTS]),
+		parents: new Set(["binary_expression", "augmented_assignment_expression"]),
+	},
+};
+
+/**
+ * The file being parsed: each scope's own complexity from one walk, set by
+ * parseScript around extraction so each extracted function reads its `cc`
+ * without walking its body again.
+ */
+let fileCc: FileComplexity | null = null;
+
+/** A function's own complexity: from the file's walk, or its own walk outside one. */
+function ccOf(node: SyntaxNode): number {
+	return (
+		fileCc?.ccAt.get(node.startIndex) ?? ownComplexity(node, TS_COMPLEXITY)
+	);
+}
 
 /**
  * File extensions read with the plain TypeScript grammar. Only TypeScript's
@@ -247,14 +298,20 @@ function parseScript(
 		const imports: ParsedImport[] = [];
 		const exports: ParsedExport[] = [];
 
-		extractFromNode(
-			tree.rootNode,
-			source,
-			functions,
-			classes,
-			imports,
-			exports,
-		);
+		const complexity = fileComplexity(tree.rootNode, TS_COMPLEXITY);
+		fileCc = complexity;
+		try {
+			extractFromNode(
+				tree.rootNode,
+				source,
+				functions,
+				classes,
+				imports,
+				exports,
+			);
+		} finally {
+			fileCc = null;
+		}
 
 		// Extract top-level constants (separate pass — only program scope)
 		const constants = extractConstants(tree.rootNode);
@@ -272,6 +329,7 @@ function parseScript(
 			language,
 			loc: lines.length,
 			functions,
+			excess: complexity.excess,
 			classes,
 			imports,
 			exports,
@@ -743,6 +801,7 @@ function buildFunctionMetadata(
 	const signature = buildSignature(node, source, name);
 	const bodyHash = computeBodyHash(node);
 	const complexity = computeComplexity(node);
+	const cc = ccOf(node);
 	const paramCount = countParams(node);
 	const errorFlow = detectErrorFlow(node);
 	const jsdoc = extractJSDoc(node);
@@ -759,6 +818,7 @@ function buildFunctionMetadata(
 		jsdoc,
 		bodyHash,
 		paramCount,
+		cc,
 		throws: errorFlow.throws || undefined,
 		hasTryCatch: errorFlow.hasTryCatch || undefined,
 	};
@@ -909,6 +969,7 @@ function pushFunctionValue(
 		jsdoc: extractJSDoc(holder),
 		bodyHash: computeBodyHash(valueNode),
 		paramCount: countParams(valueNode),
+		cc: ccOf(valueNode),
 		...buildPropsMetadata(valueNode),
 		className,
 		...(decorators.length > 0 ? { decorators } : {}),
@@ -1084,6 +1145,7 @@ function extractVariableDeclaration(
 				jsdoc,
 				bodyHash: computeBodyHash(valueNode),
 				paramCount: countParams(valueNode),
+				cc: ccOf(valueNode),
 				...buildPropsMetadata(valueNode),
 			});
 
