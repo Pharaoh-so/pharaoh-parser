@@ -810,6 +810,8 @@ function buildFunctionMetadata(
 		.startsWith("async");
 	return {
 		signature,
+		sourceStart: node.startIndex,
+		sourceEnd: node.endIndex,
 		lineStart: node.startPosition.row + 1,
 		lineEnd: node.endPosition.row + 1,
 		loc: node.endPosition.row - node.startPosition.row + 1,
@@ -958,6 +960,8 @@ function pushFunctionValue(
 	const fn: ParsedFunction = {
 		name,
 		signature,
+		sourceStart: holder.startIndex,
+		sourceEnd: valueNode.endIndex,
 		lineStart: holder.startPosition.row + 1,
 		lineEnd: valueNode.endPosition.row + 1,
 		loc: valueNode.endPosition.row - holder.startPosition.row + 1,
@@ -1127,6 +1131,12 @@ function extractVariableDeclaration(
 			nameNode.type === "identifier" &&
 			FUNCTION_VALUE_TYPES.has(valueNode.type)
 		) {
+			// A function is identified by its file and name, which can't tell two
+			// nested bindings of one name apart: a function expression is kept at
+			// module scope only (arrows everywhere, as before).
+			const scope = isExported ? node.parent?.parent : node.parent;
+			if (valueNode.type !== "arrow_function" && scope?.type !== "program")
+				continue;
 			const name = nameNode.text;
 			const isAsync = source
 				.slice(valueNode.startIndex, valueNode.endIndex)
@@ -1136,9 +1146,11 @@ function extractVariableDeclaration(
 			functions.push({
 				name,
 				signature: buildArrowSignature(nameNode, valueNode, source),
-				lineStart: node.startPosition.row + 1,
+				sourceStart: declarator.startIndex,
+				sourceEnd: valueNode.endIndex,
+				lineStart: declarator.startPosition.row + 1,
 				lineEnd: valueNode.endPosition.row + 1,
-				loc: valueNode.endPosition.row - node.startPosition.row + 1,
+				loc: valueNode.endPosition.row - declarator.startPosition.row + 1,
 				complexity: computeComplexity(valueNode),
 				isExported,
 				isAsync,

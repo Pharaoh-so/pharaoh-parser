@@ -3,6 +3,9 @@ export interface ParsedFunction {
     signature: string;
     lineStart: number;
     lineEnd: number;
+    /** Half-open UTF-16 offsets in the original source; absent on legacy/synthetic declarations. */
+    sourceStart?: number;
+    sourceEnd?: number;
     loc: number;
     complexity: number;
     isExported: boolean;

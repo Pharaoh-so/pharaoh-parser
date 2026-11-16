@@ -474,13 +474,9 @@ describe("function expressions held by variables", () => {
 					async: true,
 					params: 1,
 				},
-				{
-					name: "formatName",
-					lines: "8-8",
-					exported: false,
-					async: false,
-					params: 1,
-				},
+				// formatName, a function expression inside the IIFE, isn't listed: a
+				// function is identified by file and name, which can't tell nested
+				// bindings of one name apart, so function expressions stay at module scope.
 			]);
 			expect(parsed.functions[1].signature).toBe(
 				"async const loader = function (importer)",
