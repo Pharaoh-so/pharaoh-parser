@@ -427,6 +427,52 @@ describe("default-exported declarations", () => {
 	});
 });
 
+describe("source offsets", () => {
+	it("gives each function's UTF-16 span and starts a binding at its declarator", () => {
+		// Breaks if an offset moves (node vs declarator, holder vs value) or counts
+		// bytes instead of UTF-16 units (the first line has multi-byte characters
+		// and a surrogate pair), or a second declarator starts on the first's line.
+		const source = [
+			"// Prefix: naïve café — ✓ 😀",
+			"export function decl(a) {",
+			"\treturn a;",
+			"}",
+			"class C {",
+			"\tfield = (x) => x;",
+			"}",
+			"const arrow = (a) => a + 1;",
+			"export const fx = function (a) {",
+			"\treturn a;",
+			"};",
+			"const one = () => 1,",
+			"\ttwo = () => 2;",
+		].join("\n");
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "source-offsets-"));
+		try {
+			const file = path.join(dir, "lib.ts");
+			fs.writeFileSync(file, source);
+			const parsed = parseFile(file, "lib.ts");
+			expect(
+				parsed.functions.map((f) => [
+					f.name,
+					f.lineStart,
+					f.lineEnd,
+					source.slice(f.sourceStart, f.sourceEnd),
+				]),
+			).toEqual([
+				["decl", 2, 4, "function decl(a) {\n\treturn a;\n}"],
+				["field", 6, 6, "field = (x) => x"],
+				["arrow", 8, 8, "arrow = (a) => a + 1"],
+				["fx", 9, 11, "fx = function (a) {\n\treturn a;\n}"],
+				["one", 12, 12, "one = () => 1"],
+				["two", 13, 13, "two = () => 2"],
+			]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("function expressions held by variables", () => {
 	it("extracts direct function bindings without duplicate constants or destructuring patterns", () => {
 		// Breaks if a variable holding a function expression isn't a function: its
@@ -474,13 +520,9 @@ describe("function expressions held by variables", () => {
 					async: true,
 					params: 1,
 				},
-				{
-					name: "formatName",
-					lines: "8-8",
-					exported: false,
-					async: false,
-					params: 1,
-				},
+				// formatName, a function expression inside the IIFE, isn't listed: a
+				// function is identified by file and name, which can't tell nested
+				// bindings of one name apart, so function expressions stay at module scope.
 			]);
 			expect(parsed.functions[1].signature).toBe(
 				"async const loader = function (importer)",

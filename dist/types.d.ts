@@ -3,6 +3,9 @@ export interface ParsedFunction {
     signature: string;
     lineStart: number;
     lineEnd: number;
+    /** Half-open UTF-16 offsets of the function in the original source. Set for TypeScript, JavaScript and Vue functions; absent for Python and C/C++. */
+    sourceStart?: number;
+    sourceEnd?: number;
     loc: number;
     complexity: number;
     isExported: boolean;

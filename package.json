@@ -1,6 +1,6 @@
 {
 	"name": "pharaoh-parser",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Open-source AST parser used by Pharaoh to extract structural metadata from TypeScript, Vue and Python codebases. No source code is ever captured.",
 	"type": "module",
 	"license": "MIT",
