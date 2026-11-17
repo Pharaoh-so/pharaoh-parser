@@ -244,11 +244,32 @@ const tokensOf = (ext: string, code: string) =>
 describe("bodyTokens: leaf tokens in the body, comments excluded", () => {
 	it.each([
 		["a one-call body", ".ts", "function f(code) { g(code); }", 7],
-		["the same body laid out differently", ".ts", "function f(code) {\n\n\tg( code );\n}", 7],
-		["the same body with comments", ".ts", "function f(code) { /* why */ g(code); // note\n}", 7],
+		[
+			"the same body laid out differently",
+			".ts",
+			"function f(code) {\n\n\tg( code );\n}",
+			7,
+		],
+		[
+			"the same body with comments",
+			".ts",
+			"function f(code) { /* why */ g(code); // note\n}",
+			7,
+		],
 		["an arrow's expression body", ".ts", "const f = (a) => a + 1;", 3],
 		["two statements", ".js", "function f(a) { g(a); return a; }", 10],
-		["a Python one-call body", ".py", "def f(code):\n    # note\n    g(code)\n", 4],
+		[
+			"a Python one-call body",
+			".py",
+			"def f(code):\n    # note\n    g(code)\n",
+			4,
+		],
+		[
+			"a Python body split with a backslash",
+			".py",
+			"def f(code):\n    x = g(code) + \\\n        1\n",
+			8,
+		],
 		["a C return", ".c", "int f(int code) { return g(code); }", 8],
 	])("%s", (_case, ext, code, tokens) => {
 		expect(tokensOf(ext, code)).toBe(tokens);

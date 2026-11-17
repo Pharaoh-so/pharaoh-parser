@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { SECRET_NAME_SUFFIX, computeBodyHash as computeBodyHashShared, countBodyTokens, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { SECRET_NAME_SUFFIX, computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countBodyTokens, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { componentNameFromPath, isClassComponentHook, readOptionsApi, readSetupBindings, readTemplateRefs, readVueSfc, } from "./vue-sfc.js";
 import { Parser, jsLanguage, tsLanguage, tsxLanguage, } from "./wasm-init.js";

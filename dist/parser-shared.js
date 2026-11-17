@@ -34,7 +34,10 @@ export function countBodyTokens(node) {
     let tokens = 0;
     const stack = [body];
     for (let current = stack.pop(); current; current = stack.pop()) {
-        if (current.type === "comment" || current.type.endsWith("_comment"))
+        // Comments and Python's backslash continuations are layout, not code.
+        if (current.type === "comment" ||
+            current.type.endsWith("_comment") ||
+            current.type === "line_continuation")
             continue;
         if (current.childCount === 0) {
             tokens++;

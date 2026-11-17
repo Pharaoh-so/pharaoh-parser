@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { computeBodyHash as computeBodyHashShared, countBodyTokens, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countBodyTokens, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser, pyLanguage } from "./wasm-init.js";
 const pyParser = new Parser();
