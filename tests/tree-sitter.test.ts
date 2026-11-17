@@ -429,9 +429,9 @@ describe("default-exported declarations", () => {
 
 describe("class heads", () => {
 	it("reads extends, implements and decorators, cutting a long decorator to 500 characters", () => {
-		// Breaks if a class loses its extends or implements, the export
-		// statement's decorators stop coming first, or a long decorator is cut
-		// anywhere but 497 characters plus "...".
+		// Breaks if a class loses its extends, its implements or its decorators
+		// (an exported class's sit on its export statement, in order), or a long
+		// decorator is cut anywhere but 497 characters plus "...".
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "class-heads-"));
 		try {
 			const file = path.join(dir, "service.ts");

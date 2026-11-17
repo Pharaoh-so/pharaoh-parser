@@ -126,15 +126,11 @@ function addSetupBindings(node, { names, namespaces }) {
 }
 /** Names a variable declaration binds, leaving out those bound to a compiler macro. */
 function declaredNames(node) {
-    const names = [];
-    for (const declarator of node.namedChildren) {
-        if (declarator.type !== "variable_declarator")
-            continue;
-        if (isMacroCall(declarator.childForFieldName("value")))
-            continue;
-        names.push(...patternNames(declarator.childForFieldName("name")));
-    }
-    return names;
+    // flatMap, not push(...names): a pattern can bind more names than a call takes arguments
+    return node.namedChildren
+        .filter((declarator) => declarator.type === "variable_declarator" &&
+        !isMacroCall(declarator.childForFieldName("value")))
+        .flatMap((declarator) => patternNames(declarator.childForFieldName("name")));
 }
 /** Local names an import binds as values (type-only imports bind none). */
 function importedNames(node) {
