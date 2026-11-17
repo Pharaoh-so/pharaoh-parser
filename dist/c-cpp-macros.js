@@ -436,100 +436,139 @@ function blankNames(text, chars, from, to, wanted) {
     const line = text.slice(from, to);
     const literal = literalColumns(line);
     for (const match of line.matchAll(/\b[A-Za-z_]\w*\b/g)) {
-        const name = match[0];
+        const column = match.index ?? 0;
         // A name inside a string, a character or a comment is text, not a macro
-        if (!wanted(name) || literal[match.index ?? 0])
+        if (!wanted(match[0]) || literal[column])
             continue;
-        const start = from + (match.index ?? 0);
-        let end = start + name.length;
-        let next = end;
-        while (next < to && /[ \t]/.test(text[next]))
-            next++;
-        const hasArgs = text[next] === "(";
-        let prevWord = "";
-        let back = start - 1;
-        while (back >= from && /[ \t]/.test(text[back]))
-            back--;
-        let before = back >= from ? text[back] : "";
-        // First on its line after a declarator's `)` on the line before: a trailing
-        // attribute continued (`int f(const char *fmt, ...)` / `  PRINTF_ARGS(1, 2);`)
-        if (before === "") {
-            let up = from - 1;
-            while (up >= 0 && /\s/.test(text[up]))
-                up--;
-            if (text[up] === ")" && declaratorParen(text, up))
-                before = ")";
+        const site = nameSite(text, from, to, from + column, match[0].length);
+        if (!site)
+            continue;
+        if (sfinaeParameter(text, site)) {
+            blank(chars, site.start, site.end);
+            chars.splice(site.start, SFINAE_PARAMETER.length, ...SFINAE_PARAMETER);
         }
-        let beforeWord = "";
-        if (isWordChar(before)) {
-            let w = back;
-            while (w >= from && isWordChar(text[w]))
-                w--;
-            prevWord = text.slice(w + 1, back + 1);
-            while (w >= from && /[ \t]/.test(text[w]))
-                w--;
-            beforeWord = w >= from ? text[w] : "";
+        else if (attributeSite(site)) {
+            blank(chars, site.start, site.end);
         }
-        // `if FMT_CONSTEXPR20 (cond)`: the parentheses are the condition's
-        if (hasArgs && prevWord !== "if") {
-            // Arguments may run over a few lines: `FMT_ENABLE_IF(a &&\n b)`
-            const close = closeParen(text, next, Math.min(text.length, to + MAX_ARGS_SPAN));
-            if (close === -1)
-                continue;
-            end = close;
-            next = end;
-            while (next < to && /[ \t]/.test(text[next]))
-                next++;
-        }
-        const after = next < text.length ? text[next] : "";
-        const attributeBefore = before === "" ||
-            before === ")" ||
-            before === ">" ||
-            before === "}" ||
-            before === ";" ||
-            before === "]" ||
-            (prevWord !== "" && !VALUE_POSITION.has(prevWord)) ||
-            // `T *RESTRICT p`, `f(EV_P_ ev_io *w)`: two terms side by side are never an expression
-            ((before === "*" || before === "&" || before === "(" || before === ",") &&
-                isWordChar(after));
-        // `template <typename T, FMT_ENABLE_IF(cond)>`: a SFINAE macro stands for an
-        // unnamed parameter with a default, which `int=0` keeps in the same width
-        if (hasArgs &&
-            (before === "," || before === "<") &&
-            (after === ">" || after === ",") &&
-            end - start >= SFINAE_PARAMETER.length &&
-            // The replacement must not cover a line break: lines keep their numbers
-            !/[\r\n]/.test(text.slice(start, start + SFINAE_PARAMETER.length)) &&
-            TEMPLATE_HEAD.test(text.slice(Math.max(0, start - MAX_ARGS_SPAN), start))) {
-            blank(chars, start, end);
-            chars.splice(start, SFINAE_PARAMETER.length, ...SFINAE_PARAMETER);
-            continue;
-        }
-        if (!attributeBefore)
-            continue;
-        // `struct NAME {` names the struct; `class EXPORT NAME {` doesn't
-        if (TAG_WORDS.has(prevWord) && !isWordChar(after))
-            continue;
-        // `FOO(x);` at the start of a line is a statement, which the grammar reads
-        if (before === "" && hasArgs && after === ";")
-            continue;
-        const attributeAfter = after === "" ||
-            after === "\n" ||
-            after === "\r" ||
-            isWordChar(after) ||
-            after === "{" ||
-            after === "~" ||
-            (after === ";" && before !== "") ||
-            ((after === "=" || after === ":") && hasArgs) ||
-            (after === "(" && prevWord === "if") ||
-            // `const T *p UNUSED,`: after a declarator's name, not after a type's
-            ((after === "," || after === ")") &&
-                prevWord !== "" &&
-                (beforeWord === "*" || beforeWord === "&" || isWordChar(beforeWord)));
-        if (!attributeAfter)
-            continue;
-        blank(chars, start, end);
     }
+}
+const isBlank = (ch) => /[ \t]/.test(ch);
+const isSpace = (ch) => /\s/.test(ch);
+/** The first index from `i`, below `to`, that isn't a space or a tab (`to` if none). */
+function skipBlanks(text, i, to) {
+    let next = i;
+    while (next < to && isBlank(text[next]))
+        next++;
+    return next;
+}
+/** The last index from `i` down to `from` whose character `skip` refuses, or `from - 1`. */
+function skipBack(text, i, from, skip) {
+    let back = i;
+    while (back >= from && skip(text[back]))
+        back--;
+    return back;
+}
+/** The name `[start, start + length)` on the line `[from, to)` and its surroundings, or null when its arguments don't close. */
+function nameSite(text, from, to, start, length) {
+    let end = start + length;
+    let next = skipBlanks(text, end, to);
+    const hasArgs = text[next] === "(";
+    const { before, prevWord, beforeWord } = lookBehind(text, from, start);
+    // `if FMT_CONSTEXPR20 (cond)`: the parentheses are the condition's
+    if (hasArgs && prevWord !== "if") {
+        // Arguments may run over a few lines: `FMT_ENABLE_IF(a &&\n b)`
+        end = closeParen(text, next, Math.min(text.length, to + MAX_ARGS_SPAN));
+        if (end === -1)
+            return null;
+        next = skipBlanks(text, end, to);
+    }
+    const after = next < text.length ? text[next] : "";
+    return { start, end, hasArgs, before, prevWord, beforeWord, after };
+}
+/** What precedes the name at `start` on the line from `from` (see NameSite). */
+function lookBehind(text, from, start) {
+    const back = skipBack(text, start - 1, from, isBlank);
+    if (back < from) {
+        const before = continuesDeclarator(text, from) ? ")" : "";
+        return { before, prevWord: "", beforeWord: "" };
+    }
+    const before = text[back];
+    if (!isWordChar(before))
+        return { before, prevWord: "", beforeWord: "" };
+    const word = skipBack(text, back, from, isWordChar);
+    const ahead = skipBack(text, word, from, isBlank);
+    return {
+        before,
+        prevWord: text.slice(word + 1, back + 1),
+        beforeWord: ahead >= from ? text[ahead] : "",
+    };
+}
+/**
+ * Whether the line from `from` follows a declarator's `)` on the line before:
+ * its first name is a trailing attribute continued
+ * (`int f(const char *fmt, ...)` / `  PRINTF_ARGS(1, 2);`).
+ */
+function continuesDeclarator(text, from) {
+    const up = skipBack(text, from - 1, 0, isSpace);
+    return text[up] === ")" && declaratorParen(text, up);
+}
+/**
+ * `template <typename T, FMT_ENABLE_IF(cond)>`: a SFINAE macro stands for an
+ * unnamed parameter with a default, which `int=0` keeps in the same width.
+ */
+function sfinaeParameter(text, site) {
+    const { start, end, before, after } = site;
+    return (site.hasArgs &&
+        (before === "," || before === "<") &&
+        (after === ">" || after === ",") &&
+        end - start >= SFINAE_PARAMETER.length &&
+        // The replacement must not cover a line break: lines keep their numbers
+        !/[\r\n]/.test(text.slice(start, start + SFINAE_PARAMETER.length)) &&
+        TEMPLATE_HEAD.test(text.slice(Math.max(0, start - MAX_ARGS_SPAN), start)));
+}
+/** Characters before a name that end a declaration's previous part: an attribute can follow. */
+const ATTRIBUTE_BEFORE = new Set(["", ")", ">", "}", ";", "]"]);
+/** Characters before a name that an attribute can follow when a word comes after it. */
+const BEFORE_TERM = new Set(["*", "&", "(", ","]);
+/** Characters after a name that leave it an attribute: the line's end, `{`, `~`. */
+const ATTRIBUTE_AFTER = new Set(["", "\n", "\r", "{", "~"]);
+/** Whether the name at `site` sits where an attribute does, not where a value does. */
+function attributeSite(site) {
+    const { before, prevWord, after } = site;
+    if (!attributeBefore(site))
+        return false;
+    // `struct NAME {` names the struct; `class EXPORT NAME {` doesn't
+    if (TAG_WORDS.has(prevWord) && !isWordChar(after))
+        return false;
+    // `FOO(x);` at the start of a line is a statement, which the grammar reads
+    if (before === "" && site.hasArgs && after === ";")
+        return false;
+    return attributeAfter(site);
+}
+/** Whether what precedes the name at `site` lets it be an attribute (see attributeSite). */
+function attributeBefore(site) {
+    const { before, prevWord, after } = site;
+    return (ATTRIBUTE_BEFORE.has(before) ||
+        (prevWord !== "" && !VALUE_POSITION.has(prevWord)) ||
+        // `T *RESTRICT p`, `f(EV_P_ ev_io *w)`: two terms side by side are never an expression
+        (BEFORE_TERM.has(before) && isWordChar(after)));
+}
+/** Whether what follows the name at `site` lets it be an attribute (see attributeSite). */
+function attributeAfter(site) {
+    const { before, prevWord, after } = site;
+    return (ATTRIBUTE_AFTER.has(after) ||
+        isWordChar(after) ||
+        (after === ";" && before !== "") ||
+        ((after === "=" || after === ":") && site.hasArgs) ||
+        (after === "(" && prevWord === "if") ||
+        afterDeclaratorName(site));
+}
+/** `const T *p UNUSED,`: after a declarator's name, not after a type's. */
+function afterDeclaratorName(site) {
+    const { prevWord, beforeWord, after } = site;
+    return ((after === "," || after === ")") &&
+        prevWord !== "" &&
+        (beforeWord === "*" || beforeWord === "&" || isWordChar(beforeWord)));
 }
 /**
  * Where the directive in `[from, to)` opens a block comment it doesn't close,
@@ -578,67 +617,84 @@ function openComment(text, from, to) {
 export function firstBranches(text, dialect) {
     const starts = lineStarts(text);
     const chars = text.split("");
-    // Per open conditional: is the current branch read, has a branch been read
     const stack = [];
-    const reading = () => stack.every((level) => level.reading);
-    const skipFirst = (condition, keyword) => {
-        const c = condition.trim();
-        if (keyword === "if" && /^0\b/.test(c))
-            return true;
-        // `__cplusplus`, `defined(__cplusplus)`, and either negated with `!`
-        const cplusplus = /^(!\s*)?(?:defined\s*\(?\s*)?__cplusplus\b/.exec(c);
-        if (!cplusplus)
-            return false;
-        const positive = (keyword === "ifdef" || keyword === "if") && cplusplus[1] === undefined;
-        return dialect === "c" ? positive : !positive;
-    };
     for (let row = 0; row < starts.length - 1; row++) {
         const from = starts[row];
-        let to = starts[row + 1];
-        const line = text.slice(from, to);
+        const line = text.slice(from, starts[row + 1]);
         const directive = /^\s*#\s*(\w*)(.*)$/s.exec(line);
-        // A directive continued with `\` spans the lines that follow
-        let last = row;
-        while (directive &&
-            /\\\s*$/.test(text.slice(starts[last], starts[last + 1])) &&
-            last + 1 < starts.length - 1) {
-            last++;
-        }
-        to = starts[last + 1];
-        if (directive) {
-            const [, keyword, rest] = directive;
-            if (keyword === "if" || keyword === "ifdef" || keyword === "ifndef") {
-                const read = !skipFirst(rest, keyword);
-                stack.push({ reading: read, taken: read });
-            }
-            else if (keyword === "elif" || keyword === "else") {
-                const level = stack.at(-1);
-                if (level) {
-                    level.reading = !level.taken;
-                    level.taken = true;
-                }
-            }
-            else if (keyword === "endif") {
-                stack.pop();
-            }
-            blank(chars, from, to);
-            row = last;
-            // A block comment the directive opens and doesn't close (`#define X 1 /* a
-            // note that runs on`) goes with it: its rest is not code
-            const close = openComment(text, from, to) === -1 ? -1 : text.indexOf("*/", to);
-            if (close !== -1) {
-                blank(chars, to, close + 2);
-                while (row + 1 < starts.length - 1 && starts[row + 1] <= close)
-                    row++;
-                // The rest of the closing line belongs to the branch the directive is in
-                if (!reading())
-                    blank(chars, close + 2, starts[row + 1]);
-            }
+        if (!directive) {
+            if (!reading(stack))
+                blank(chars, from, starts[row + 1]);
             continue;
         }
-        if (!reading())
-            blank(chars, from, to);
+        const [, keyword, rest] = directive;
+        row = continuedTo(text, starts, row);
+        const to = starts[row + 1];
+        enterBranch(stack, keyword, rest, dialect);
+        blank(chars, from, to);
+        // A block comment the directive opens and doesn't close (`#define X 1 /* a
+        // note that runs on`) goes with it: its rest is not code
+        const close = openComment(text, from, to) === -1 ? -1 : text.indexOf("*/", to);
+        if (close !== -1) {
+            row = blankComment(chars, starts, row, to, close, reading(stack));
+        }
     }
     return chars.join("");
+}
+/** Whether every open conditional reads its current branch. */
+function reading(stack) {
+    return stack.every((level) => level.reading);
+}
+/** The last line of the directive on `row`: a directive continued with `\` spans the lines that follow. */
+function continuedTo(text, starts, row) {
+    let last = row;
+    while (/\\\s*$/.test(text.slice(starts[last], starts[last + 1])) &&
+        last + 1 < starts.length - 1) {
+        last++;
+    }
+    return last;
+}
+/** Follow one directive's effect on the open conditionals: `#if` opens one, `#elif`/`#else` moves to its next branch, `#endif` closes it. */
+function enterBranch(stack, keyword, condition, dialect) {
+    if (keyword === "if" || keyword === "ifdef" || keyword === "ifndef") {
+        const read = !skipsFirstBranch(condition, keyword, dialect);
+        stack.push({ reading: read, taken: read });
+    }
+    else if (keyword === "elif" || keyword === "else") {
+        const level = stack.at(-1);
+        if (level) {
+            level.reading = !level.taken;
+            level.taken = true;
+        }
+    }
+    else if (keyword === "endif") {
+        stack.pop();
+    }
+}
+/** Whether a conditional's first branch isn't read: `#if 0`, or `__cplusplus` tested in the dialect that never defines it that way. */
+function skipsFirstBranch(condition, keyword, dialect) {
+    const c = condition.trim();
+    if (keyword === "if" && /^0\b/.test(c))
+        return true;
+    // `__cplusplus`, `defined(__cplusplus)`, and either negated with `!`
+    const cplusplus = /^(!\s*)?(?:defined\s*\(?\s*)?__cplusplus\b/.exec(c);
+    if (!cplusplus)
+        return false;
+    const positive = (keyword === "ifdef" || keyword === "if") && cplusplus[1] === undefined;
+    return dialect === "c" ? positive : !positive;
+}
+/**
+ * Blank the comment a directive ending at `to` opens, through the comment's
+ * close at `close`, and return the row it closes on. The rest of the closing
+ * line belongs to the branch the directive is in: blanked unless it is read.
+ */
+function blankComment(chars, starts, row, to, close, read) {
+    let last = row;
+    blank(chars, to, close + 2);
+    while (last + 1 < starts.length - 1 && starts[last + 1] <= close)
+        last++;
+    if (!read)
+        blank(chars, close + 2, starts[last + 1]);
+    return last;
 }
 //# sourceMappingURL=c-cpp-macros.js.map

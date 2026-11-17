@@ -27,6 +27,7 @@ export { collectAttributeMacros } from "./c-cpp-macros.js";
 import {
 	COMPLEXITY_THRESHOLD,
 	type ComplexityRules,
+	type FileComplexity,
 	type OnTree,
 	SECRET_NAME_SUFFIX,
 	computeBodyHash,
@@ -247,125 +248,206 @@ function read(
 	relativePath: string,
 	language: "c" | "cpp",
 ): ParsedFile {
-	const { query } = DIALECTS[language];
-	const complexity = fileComplexity(root, C_COMPLEXITY);
-	const functions: ParsedFunction[] = [];
-	const classes: ParsedClass[] = [];
-	const exports: ParsedExport[] = [];
-	const methodsOf = new Map<string, Set<string>>();
-	const classNodes: SyntaxNode[] = [];
-	const seen = new Set<number>();
-	const exported = new Set<string>();
-	const exportLines = new Map<string, number>();
-	const exportOnce = (
-		name: string,
-		kind: ParsedExport["kind"],
-		node: SyntaxNode,
-	): void => {
-		if (exported.has(`${kind}:${name}`)) return;
-		exported.add(`${kind}:${name}`);
-		exportLines.set(`${kind}:${name}`, node.startPosition.row + 1);
-		exports.push({ name, kind, isDefault: false });
+	const reading: Reading = {
+		source,
+		complexity: fileComplexity(root, C_COMPLEXITY),
+		functions: [],
+		methodsOf: new Map(),
+		exports: [],
+		exportLines: new Map(),
 	};
-
-	for (const { name: tag, node } of query.captures(root)) {
-		if (seen.has(node.id)) continue;
-		if (tag === "definition.class" && CLASS_TYPES.has(node.type)) {
-			seen.add(node.id);
-			if (node.childForFieldName("body")) classNodes.push(node);
-			continue;
-		}
-		if (node.type !== "function_declarator") continue;
-		seen.add(node.id);
-
-		const declared = declaredName(node);
-		let owner = node.parent;
-		while (owner && WRAPPING_DECLARATORS.has(owner.type)) owner = owner.parent;
-		if (!declared || !owner) continue;
-		// `Foo a(b);` in a body reads as a prototype but declares a variable
-		if (owner.type !== "function_definition" && insideBody(owner)) continue;
-		const where = enclosing(owner);
-		const className = declared.scope ?? where.className;
-		if (className) {
-			const methods = methodsOf.get(className) ?? new Set<string>();
-			methodsOf.set(className, methods.add(declared.name));
-		}
-		const isExported = !where.internal && (!!className || !isStatic(owner));
-
-		if (owner.type !== "function_definition") {
-			// A prototype: the header's promise of a function defined elsewhere
-			const prototype =
-				owner.type === "declaration" || owner.type === "field_declaration";
-			if (prototype && !className && isExported) {
-				exportOnce(declared.name, "function", owner);
-			}
-			continue;
-		}
-		const body = owner.childForFieldName("body");
-		// Up to the body, or to a constructor's `: member(value)` list before it
-		const head = owner.children.find(
-			(c) => c?.type === "field_initializer_list" || c?.id === body?.id,
-		);
-		const signature = oneLine(
-			source.slice(owner.startIndex, head?.startIndex ?? owner.endIndex),
-		).slice(0, MAX_SIGNATURE_LENGTH);
-		functions.push({
-			name: declared.name,
-			signature,
-			lineStart: owner.startPosition.row + 1,
-			lineEnd: owner.endPosition.row + 1,
-			loc: owner.endPosition.row - owner.startPosition.row + 1,
-			complexity: computeComplexity(
-				body ?? owner,
-				COMPLEXITY_TYPES,
-				isLogicalOperator,
-			),
-			cc:
-				complexity.ccAt.get(owner.startIndex) ??
-				ownComplexity(owner, C_COMPLEXITY),
-			isExported,
-			isAsync: false,
-			...(className ? { className } : {}),
-			bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
-			// `f(void)` takes nothing
-			paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
-		});
-		if (!className && isExported) exportOnce(declared.name, "function", owner);
-	}
-
-	for (const node of classNodes) {
-		const name = node.childForFieldName("name")?.text;
-		if (!name) continue;
-		const lineStart = node.startPosition.row + 1;
-		const lineEnd = node.endPosition.row + 1;
-		const [base, ...otherBases] = baseNames(node);
-		const isExported = !enclosing(node).internal;
-		classes.push({
-			name,
-			lineStart,
-			lineEnd,
-			...computeClassMetrics(name, lineStart, lineEnd, functions),
-			isExported,
-			methods: [...(methodsOf.get(name) ?? [])],
-			...(base ? { extends: base } : {}),
-			...(otherBases.length > 0 ? { implements: otherBases } : {}),
-		});
-		if (isExported) exportOnce(name, "class", node);
+	const classes: ParsedClass[] = [];
+	for (const node of readDeclarations(root, language, reading)) {
+		const parsedClass = readClass(node, reading);
+		if (!parsedClass) continue;
+		classes.push(parsedClass);
+		if (parsedClass.isExported)
+			exportOnce(reading, parsedClass.name, "class", node);
 	}
 
 	const parsed: ParsedFile = {
 		path: relativePath,
 		language,
 		loc: source.split("\n").length,
-		functions,
-		excess: complexity.excess,
+		functions: reading.functions,
+		excess: reading.complexity.excess,
 		classes,
 		imports: includes(root),
-		exports,
+		exports: reading.exports,
 		constants: scalarMacros(root),
 	};
-	EXPORT_LINES.set(parsed, exportLines);
+	EXPORT_LINES.set(parsed, reading.exportLines);
 	return parsed;
+}
+
+/** What reading one tree collects as it goes (see read). */
+interface Reading {
+	/** The text the tree was parsed from. */
+	source: string;
+	/** Each scope's own complexity, and the file's excess. */
+	complexity: FileComplexity;
+	/** Functions with a body, in the order they are found. */
+	functions: ParsedFunction[];
+	/** Each class's method names, by class name. */
+	methodsOf: Map<string, Set<string>>;
+	/** Exports in the order they are found, each name and kind once. */
+	exports: ParsedExport[];
+	/** The line each export was declared at, by `kind:name` (EXPORT_LINES). */
+	exportLines: Map<string, number>;
+}
+
+/** Export `name` as `kind` from `node`'s line, unless it is already exported as that kind. */
+function exportOnce(
+	reading: Reading,
+	name: string,
+	kind: ParsedExport["kind"],
+	node: SyntaxNode,
+): void {
+	const key = `${kind}:${name}`;
+	if (reading.exportLines.has(key)) return;
+	reading.exportLines.set(key, node.startPosition.row + 1);
+	reading.exports.push({ name, kind, isDefault: false });
+}
+
+/**
+ * Read every function the dialect's tags query finds into `reading`, and
+ * return the classes it finds that have a body, to be read once every method is.
+ */
+function readDeclarations(
+	root: SyntaxNode,
+	language: "c" | "cpp",
+	reading: Reading,
+): SyntaxNode[] {
+	const classNodes: SyntaxNode[] = [];
+	const seen = new Set<number>();
+	for (const { name: tag, node } of DIALECTS[language].query.captures(root)) {
+		if (seen.has(node.id)) continue;
+		if (tag === "definition.class" && CLASS_TYPES.has(node.type)) {
+			seen.add(node.id);
+			if (node.childForFieldName("body")) classNodes.push(node);
+		} else if (node.type === "function_declarator") {
+			seen.add(node.id);
+			readDeclarator(node, reading);
+		}
+	}
+	return classNodes;
+}
+
+/**
+ * What a function declarator's owner is when a name outside a class is
+ * exported: a definition, or a prototype (`declaration`, `field_declaration`),
+ * the header's promise of a function defined elsewhere.
+ */
+const EXPORTING_OWNERS = new Set([
+	"function_definition",
+	"declaration",
+	"field_declaration",
+]);
+
+/** Read what one function declarator declares: a function with its body, or a prototype. */
+function readDeclarator(node: SyntaxNode, reading: Reading): void {
+	const declared = declaration(node);
+	if (!declared) return;
+	const { name, owner, className, isExported } = declared;
+	if (className) {
+		const methods = reading.methodsOf.get(className) ?? new Set<string>();
+		reading.methodsOf.set(className, methods.add(name));
+	}
+	if (owner.type === "function_definition") {
+		reading.functions.push(readFunction(declared, node, reading));
+	}
+	if (!className && isExported && EXPORTING_OWNERS.has(owner.type)) {
+		exportOnce(reading, name, "function", owner);
+	}
+}
+
+/** What a function declarator declares (see declaration). */
+interface Declaration {
+	/** The function's own name. */
+	name: string;
+	/** The definition or declaration the declarator belongs to. */
+	owner: SyntaxNode;
+	/** The class it is a method of, if any. */
+	className?: string;
+	/** Not `static` at file scope, and not in an unnamed namespace. */
+	isExported: boolean;
+}
+
+/** What a function declarator declares, or null when it declares no function (`Foo a(b);` in a body). */
+function declaration(node: SyntaxNode): Declaration | null {
+	const declared = declaredName(node);
+	const owner = declaratorOwner(node);
+	if (!declared || !owner) return null;
+	// `Foo a(b);` in a body reads as a prototype but declares a variable
+	if (owner.type !== "function_definition" && insideBody(owner)) return null;
+	const where = enclosing(owner);
+	const className = declared.scope ?? where.className;
+	const isExported = !where.internal && (!!className || !isStatic(owner));
+	return { name: declared.name, owner, className, isExported };
+}
+
+/** The definition or declaration a function declarator belongs to, past `*f()` and `&f()` wrappers. */
+function declaratorOwner(node: SyntaxNode): SyntaxNode | null {
+	let owner = node.parent;
+	while (owner && WRAPPING_DECLARATORS.has(owner.type)) owner = owner.parent;
+	return owner;
+}
+
+/** A function definition, from its declarator `node`, as a ParsedFunction. */
+function readFunction(
+	declared: Declaration,
+	node: SyntaxNode,
+	reading: Reading,
+): ParsedFunction {
+	const { owner, className } = declared;
+	const body = owner.childForFieldName("body");
+	// Up to the body, or to a constructor's `: member(value)` list before it
+	const head = owner.children.find(
+		(c) => c?.type === "field_initializer_list" || c?.id === body?.id,
+	);
+	const signature = oneLine(
+		reading.source.slice(owner.startIndex, head?.startIndex ?? owner.endIndex),
+	).slice(0, MAX_SIGNATURE_LENGTH);
+	return {
+		name: declared.name,
+		signature,
+		lineStart: owner.startPosition.row + 1,
+		lineEnd: owner.endPosition.row + 1,
+		loc: owner.endPosition.row - owner.startPosition.row + 1,
+		complexity: computeComplexity(
+			body ?? owner,
+			COMPLEXITY_TYPES,
+			isLogicalOperator,
+		),
+		cc:
+			reading.complexity.ccAt.get(owner.startIndex) ??
+			ownComplexity(owner, C_COMPLEXITY),
+		isExported: declared.isExported,
+		isAsync: false,
+		...(className ? { className } : {}),
+		bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
+		// `f(void)` takes nothing
+		paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
+	};
+}
+
+/** A class, struct or union with a body as a ParsedClass, or null when it has no name. */
+function readClass(node: SyntaxNode, reading: Reading): ParsedClass | null {
+	const name = node.childForFieldName("name")?.text;
+	if (!name) return null;
+	const lineStart = node.startPosition.row + 1;
+	const lineEnd = node.endPosition.row + 1;
+	const [base, ...otherBases] = baseNames(node);
+	return {
+		name,
+		lineStart,
+		lineEnd,
+		...computeClassMetrics(name, lineStart, lineEnd, reading.functions),
+		isExported: !enclosing(node).internal,
+		methods: [...(reading.methodsOf.get(name) ?? [])],
+		...(base ? { extends: base } : {}),
+		...(otherBases.length > 0 ? { implements: otherBases } : {}),
+	};
 }
 
 /** The line each export of a read was declared at, for merge (ParsedExport has none). */
