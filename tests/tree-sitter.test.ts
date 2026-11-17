@@ -427,6 +427,50 @@ describe("default-exported declarations", () => {
 	});
 });
 
+describe("class heads", () => {
+	it("reads extends, implements and decorators, cutting a long decorator to 500 characters", () => {
+		// Breaks if a class loses its extends, its implements or its decorators
+		// (an exported class's sit on its export statement, in order), or a long
+		// decorator is cut anywhere but 497 characters plus "...".
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "class-heads-"));
+		try {
+			const file = path.join(dir, "service.ts");
+			fs.writeFileSync(
+				file,
+				[
+					"interface A {}",
+					"interface B<T> {}",
+					"class Base {}",
+					"@Injectable()",
+					`@Meta("${"x".repeat(600)}")`,
+					"export class Service extends Base implements A, B<string> {}",
+					"@Own()",
+					"class Local extends Base {}",
+				].join("\n"),
+			);
+			const parsed = parseFile(file, "service.ts");
+			const service = parsed.classes.find((c) => c.name === "Service");
+			expect(service).toMatchObject({
+				isExported: true,
+				extends: "Base",
+				implements: ["A", "B<string>"],
+			});
+			expect(service?.decorators?.[0]).toBe("@Injectable()");
+			expect(service?.decorators?.[1]).toHaveLength(500);
+			expect(service?.decorators?.[1]).toMatch(/^@Meta\("x+\.\.\.$/);
+			const local = parsed.classes.find((c) => c.name === "Local");
+			expect(local).toMatchObject({
+				isExported: false,
+				extends: "Base",
+				implements: undefined,
+				decorators: ["@Own()"],
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("source offsets", () => {
 	it("gives each function's UTF-16 span and starts a binding at its declarator", () => {
 		// Breaks if an offset moves (node vs declarator, holder vs value) or counts

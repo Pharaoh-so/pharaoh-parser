@@ -135,93 +135,108 @@ const MAX_CONSTANT_VALUE_LENGTH = 128;
 function extractConstants(rootNode: SyntaxNode): ParsedConstant[] {
 	const constants: ParsedConstant[] = [];
 
-	function processDeclaration(node: SyntaxNode, isExported: boolean): void {
-		// Only const declarations (not let/var)
-		if (!node.children.some((c) => c.type === "const")) return;
-
-		for (const declarator of node.children) {
-			if (declarator.type !== "variable_declarator") continue;
-
-			const nameNode = declarator.childForFieldName("name");
-			if (!nameNode || nameNode.type !== "identifier") continue;
-
-			// Skip constants with secret-like names (defense-in-depth)
-			if (SECRET_NAME_SUFFIX.test(nameNode.text)) continue;
-
-			const valueNode = declarator.childForFieldName("value");
-
-			// Function-valued bindings are already handled as ParsedFunction.
-			if (valueNode && FUNCTION_VALUE_TYPES.has(valueNode.type)) continue;
-
-			// Extract scalar value
-			// Unwrap `as const` / `satisfies Type` to reach the inner scalar
-			let value: string | null = null;
-			let inner = valueNode;
-			while (
-				inner?.type === "as_expression" ||
-				inner?.type === "satisfies_expression"
-			) {
-				inner = inner.children[0] ?? null;
-			}
-			if (inner) {
-				if (inner.type === "string" || inner.type === "number") {
-					const stripped =
-						inner.type === "string"
-							? inner.text.replace(/^['"`]|['"`]$/g, "")
-							: inner.text;
-					if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
-						value = stripped;
-					}
-				} else if (
-					inner.type === "template_string" &&
-					!inner.children.some((c) => c.type === "template_substitution")
-				) {
-					const stripped = inner.text.replace(/^`|`$/g, "");
-					if (stripped.length <= MAX_CONSTANT_VALUE_LENGTH) {
-						value = stripped;
-					}
-				}
-			}
-
-			// Extract type annotation
-			let typeAnnotation: string | null = null;
-			const typeNode = declarator.childForFieldName("type");
-			if (typeNode) {
-				// type_annotation wraps `: Type` — strip the leading colon
-				typeAnnotation = typeNode.text.replace(/^:\s*/, "");
-			}
-
-			constants.push({
-				name: nameNode.text,
-				value,
-				typeAnnotation,
-				isExported,
-				lineStart: node.startPosition.row + 1,
-				lineEnd: node.endPosition.row + 1,
-			});
-		}
-	}
-
 	// Walk only top-level children (not recursive)
 	for (const child of rootNode.children) {
 		if (
 			child.type === "lexical_declaration" ||
 			child.type === "variable_declaration"
 		) {
-			processDeclaration(child, false);
+			readConstants(child, false, constants);
 		} else if (child.type === "export_statement") {
 			for (const inner of child.children) {
 				if (
 					inner.type === "lexical_declaration" ||
 					inner.type === "variable_declaration"
 				) {
-					processDeclaration(inner, true);
+					readConstants(inner, true, constants);
 				}
 			}
 		}
 	}
 
 	return constants;
+}
+
+/** Push each constant a `const` declaration declares (not let/var) onto `constants`. */
+function readConstants(
+	node: SyntaxNode,
+	isExported: boolean,
+	constants: ParsedConstant[],
+): void {
+	// Only const declarations (not let/var)
+	if (!node.children.some((c) => c.type === "const")) return;
+
+	for (const declarator of node.children) {
+		if (declarator.type !== "variable_declarator") continue;
+		const constant = readConstant(declarator, node, isExported);
+		if (constant) constants.push(constant);
+	}
+}
+
+/**
+ * One declarator of a `const` declaration `node` as a ParsedConstant, or null
+ * for a destructuring pattern, a secret-like name or a function value.
+ */
+function readConstant(
+	declarator: SyntaxNode,
+	node: SyntaxNode,
+	isExported: boolean,
+): ParsedConstant | null {
+	const nameNode = declarator.childForFieldName("name");
+	if (!nameNode || nameNode.type !== "identifier") return null;
+
+	// Skip constants with secret-like names (defense-in-depth)
+	if (SECRET_NAME_SUFFIX.test(nameNode.text)) return null;
+
+	const valueNode = declarator.childForFieldName("value");
+
+	// Function-valued bindings are already handled as ParsedFunction.
+	if (valueNode && FUNCTION_VALUE_TYPES.has(valueNode.type)) return null;
+
+	const typeNode = declarator.childForFieldName("type");
+	return {
+		name: nameNode.text,
+		value: scalarValue(valueNode),
+		// type_annotation wraps `: Type` — strip the leading colon
+		typeAnnotation: typeNode ? typeNode.text.replace(/^:\s*/, "") : null,
+		isExported,
+		lineStart: node.startPosition.row + 1,
+		lineEnd: node.endPosition.row + 1,
+	};
+}
+
+/**
+ * A constant's scalar value, unwrapping `as const` / `satisfies Type`: a
+ * string or template string without quotes, or a number, as written. Null
+ * for anything else, or a value over MAX_CONSTANT_VALUE_LENGTH.
+ */
+function scalarValue(valueNode: SyntaxNode | null): string | null {
+	let inner = valueNode;
+	while (
+		inner?.type === "as_expression" ||
+		inner?.type === "satisfies_expression"
+	) {
+		inner = inner.children[0] ?? null;
+	}
+	if (!inner) return null;
+	const text = scalarText(inner);
+	return text !== null && text.length <= MAX_CONSTANT_VALUE_LENGTH
+		? text
+		: null;
+}
+
+/** A scalar literal's text without its quotes, or null when `node` isn't one. */
+function scalarText(node: SyntaxNode): string | null {
+	if (node.type === "string") return node.text.replace(/^['"`]|['"`]$/g, "");
+	if (node.type === "number") return node.text;
+	// A template string with no `${}` is a plain string
+	if (
+		node.type === "template_string" &&
+		!node.children.some((c) => c.type === "template_substitution")
+	) {
+		return node.text.replace(/^`|`$/g, "");
+	}
+	return null;
 }
 
 /**
@@ -1301,49 +1316,11 @@ function extractRequireCalls(node: SyntaxNode, imports: ParsedImport[]): void {
 		if (declarator.type !== "variable_declarator") continue;
 
 		const nameNode = declarator.childForFieldName("name");
-		const valueNode = declarator.childForFieldName("value");
-		if (!nameNode || !valueNode) continue;
-
-		// value must be a call_expression where function is `require`
-		if (valueNode.type !== "call_expression") continue;
-
-		const funcNode = valueNode.childForFieldName("function");
-		if (
-			!funcNode ||
-			funcNode.type !== "identifier" ||
-			funcNode.text !== "require"
-		)
-			continue;
-
-		// Extract the source path from arguments
-		const argsNode = valueNode.childForFieldName("arguments");
-		if (!argsNode) continue;
-
-		const stringNode = argsNode.children.find((c) => c.type === "string");
-		if (!stringNode) continue;
-
-		const source = stringNode.text.replace(/['"]/g, "");
+		const source = requiredSource(declarator.childForFieldName("value"));
+		if (!nameNode || source === null) continue;
 
 		// Extract symbols from the binding pattern
-		const symbols: string[] = [];
-		let isNamespace = false;
-
-		if (nameNode.type === "object_pattern") {
-			// const { a, b } = require("./foo")
-			for (const child of nameNode.children) {
-				if (child.type === "shorthand_property_identifier_pattern") {
-					symbols.push(child.text);
-				} else if (child.type === "pair_pattern") {
-					const keyNode = child.childForFieldName("key");
-					if (keyNode) symbols.push(keyNode.text);
-				}
-			}
-		} else if (nameNode.type === "identifier") {
-			// const x = require("./foo")
-			isNamespace = true;
-			symbols.push(nameNode.text);
-		}
-
+		const { symbols, isNamespace } = requireBindings(nameNode);
 		if (symbols.length === 0) continue;
 
 		imports.push({
@@ -1354,6 +1331,55 @@ function extractRequireCalls(node: SyntaxNode, imports: ParsedImport[]): void {
 			line: node.startPosition.row + 1,
 		});
 	}
+}
+
+/** The path `require("./foo")` loads, when `value` is that call with a string; null otherwise. */
+function requiredSource(value: SyntaxNode | null): string | null {
+	// value must be a call_expression where function is `require`
+	if (value?.type !== "call_expression") return null;
+	const funcNode = value.childForFieldName("function");
+	if (
+		!funcNode ||
+		funcNode.type !== "identifier" ||
+		funcNode.text !== "require"
+	) {
+		return null;
+	}
+	return stringArgument(value);
+}
+
+/**
+ * A call's first string literal argument without its quotes, or null when it
+ * has none: a template string or a variable is skipped.
+ */
+function stringArgument(call: SyntaxNode): string | null {
+	const argsNode = call.childForFieldName("arguments");
+	const stringNode = argsNode?.children.find((c) => c.type === "string");
+	return stringNode ? stringNode.text.replace(/['"]/g, "") : null;
+}
+
+/** The names a `require()` binds: `const x =` (the namespace) or `const { a, b: c } =` (its keys, `a` and `b`). */
+function requireBindings(nameNode: SyntaxNode): {
+	symbols: string[];
+	isNamespace: boolean;
+} {
+	// const x = require("./foo")
+	if (nameNode.type === "identifier") {
+		return { symbols: [nameNode.text], isNamespace: true };
+	}
+	const symbols: string[] = [];
+	if (nameNode.type !== "object_pattern")
+		return { symbols, isNamespace: false };
+	// const { a, b } = require("./foo")
+	for (const child of nameNode.children) {
+		if (child.type === "shorthand_property_identifier_pattern") {
+			symbols.push(child.text);
+		} else if (child.type === "pair_pattern") {
+			const keyNode = child.childForFieldName("key");
+			if (keyNode) symbols.push(keyNode.text);
+		}
+	}
+	return { symbols, isNamespace: false };
 }
 
 function extractExportStatement(
@@ -1592,56 +1618,11 @@ function extractDynamicImports(
 		if (declarator.type !== "variable_declarator") continue;
 
 		const nameNode = declarator.childForFieldName("name");
-		const valueNode = declarator.childForFieldName("value");
-		if (!nameNode || !valueNode) continue;
-
-		// value must be: await_expression → call_expression where function is `import`
-		if (valueNode.type !== "await_expression") continue;
-
-		const callExpr = valueNode.children.find(
-			(c) => c.type === "call_expression",
-		);
-		if (!callExpr) continue;
-
-		const funcNode = callExpr.childForFieldName("function");
-		if (!funcNode || funcNode.type !== "import") continue;
-
-		// Extract the import source path from arguments
-		const argsNode = callExpr.childForFieldName("arguments");
-		if (!argsNode) continue;
-
-		// Only handle static string literals — skip template strings with interpolation
-		const stringNode = argsNode.children.find((c) => c.type === "string");
-		if (!stringNode) continue;
-
-		const source = stringNode.text.replace(/['"]/g, "");
+		const source = importedSource(declarator.childForFieldName("value"));
+		if (!nameNode || source === null) continue;
 
 		// Extract symbols from the binding pattern
-		const symbols: string[] = [];
-		let isNamespace = false;
-		const aliases: { local: string; original: string }[] = [];
-
-		if (nameNode.type === "object_pattern") {
-			// const { a, b } = await import("...")
-			for (const child of nameNode.children) {
-				if (child.type === "shorthand_property_identifier_pattern") {
-					symbols.push(child.text);
-				} else if (child.type === "pair_pattern") {
-					// const { Foo: bar } = await import("...")
-					const keyNode = child.childForFieldName("key");
-					const valNode = child.childForFieldName("value");
-					if (keyNode && valNode) {
-						symbols.push(valNode.text);
-						aliases.push({ local: valNode.text, original: keyNode.text });
-					}
-				}
-			}
-		} else if (nameNode.type === "identifier") {
-			// const mod = await import("...")
-			isNamespace = true;
-			symbols.push(nameNode.text);
-		}
-
+		const { symbols, isNamespace, aliases } = dynamicImportBindings(nameNode);
 		if (symbols.length === 0) continue;
 
 		imports.push({
@@ -1653,6 +1634,56 @@ function extractDynamicImports(
 			...(aliases.length > 0 ? { aliases } : {}),
 		});
 	}
+}
+
+/** The path `await import("./path")` loads, when `value` is that expression with a string; null otherwise. */
+function importedSource(value: SyntaxNode | null): string | null {
+	// value must be: await_expression → call_expression where function is `import`
+	if (value?.type !== "await_expression") return null;
+	const callExpr = value.children.find((c) => c.type === "call_expression");
+	const funcNode = callExpr?.childForFieldName("function");
+	if (!callExpr || funcNode?.type !== "import") return null;
+	// Only handle static string literals — skip template strings with interpolation
+	return stringArgument(callExpr);
+}
+
+/** What `await import()` binds (see dynamicImportBindings). */
+interface ImportBindings {
+	/** Local names. */
+	symbols: string[];
+	/** Whether the module is bound whole: `const mod =`. */
+	isNamespace: boolean;
+	/** Renamed bindings: `{ Foo: bar }`. */
+	aliases: { local: string; original: string }[];
+}
+
+/** The names an `await import()` binds: `const mod =` (the namespace) or `const { a, Foo: bar } =` (local names, with aliases). */
+function dynamicImportBindings(nameNode: SyntaxNode): ImportBindings {
+	// const mod = await import("...")
+	if (nameNode.type === "identifier") {
+		return { symbols: [nameNode.text], isNamespace: true, aliases: [] };
+	}
+	const bindings: ImportBindings = {
+		symbols: [],
+		isNamespace: false,
+		aliases: [],
+	};
+	if (nameNode.type !== "object_pattern") return bindings;
+	// const { a, b } = await import("...")
+	for (const child of nameNode.children) {
+		if (child.type === "shorthand_property_identifier_pattern") {
+			bindings.symbols.push(child.text);
+		} else if (child.type === "pair_pattern") {
+			// const { Foo: bar } = await import("...")
+			const keyNode = child.childForFieldName("key");
+			const valNode = child.childForFieldName("value");
+			if (keyNode && valNode) {
+				bindings.symbols.push(valNode.text);
+				bindings.aliases.push({ local: valNode.text, original: keyNode.text });
+			}
+		}
+	}
+	return bindings;
 }
 
 /**

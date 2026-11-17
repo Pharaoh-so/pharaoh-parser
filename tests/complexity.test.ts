@@ -295,9 +295,9 @@ describe("excess: each scope's distance over 10, summed per file", () => {
 });
 
 describe("the parser's own code", () => {
-	// Pharaoh's Health plan splits the ten functions that held 78% of this
-	// repo's excess; each is listed here once it is split. Breaks when one of
-	// them grows past 10 again, or is renamed without updating this list.
+	// Pharaoh's Health plan split the ten functions that held 78% of this
+	// repo's excess (processDeclaration is now readConstants). Breaks when one
+	// of them grows past 10 again, or is renamed without updating this list.
 	const SPLIT: [file: string, name: string][] = [
 		["c-cpp-macros.ts", "blankNames"],
 		["c-cpp-macros.ts", "firstBranches"],
@@ -305,6 +305,10 @@ describe("the parser's own code", () => {
 		["tree-sitter.ts", "extractExportStatement"],
 		["tree-sitter.ts", "extractClass"],
 		["tree-sitter.ts", "addVueComponent"],
+		["tree-sitter.ts", "readConstants"],
+		["tree-sitter.ts", "extractDynamicImports"],
+		["tree-sitter.ts", "extractRequireCalls"],
+		["vue-sfc.ts", "readSetupBindings"],
 	];
 
 	it.each(SPLIT)("%s: %s stays at cc 10 or less", (file, name) => {
