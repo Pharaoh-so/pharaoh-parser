@@ -31,6 +31,7 @@ import {
 	type OnTree,
 	SECRET_NAME_SUFFIX,
 	computeBodyHash,
+	countBodyTokens,
 	computeComplexity,
 	countParams,
 	fileComplexity,
@@ -426,6 +427,7 @@ function readFunction(
 		isAsync: false,
 		...(className ? { className } : {}),
 		bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
+		bodyTokens: countBodyTokens(owner),
 		// `f(void)` takes nothing
 		paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
 	};

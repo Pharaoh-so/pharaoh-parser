@@ -235,6 +235,26 @@ describe("cc: the same logic in every language", () => {
 	});
 });
 
+/** `bodyTokens` of the function named `f`. */
+const tokensOf = (ext: string, code: string) =>
+	parse(ext, code).functions.find((fn) => fn.name === "f")?.bodyTokens;
+
+// Breaks when: comments or whitespace change the count, a language stops
+// counting its body's leaves, or a body is counted from outside its braces.
+describe("bodyTokens: leaf tokens in the body, comments excluded", () => {
+	it.each([
+		["a one-call body", ".ts", "function f(code) { g(code); }", 7],
+		["the same body laid out differently", ".ts", "function f(code) {\n\n\tg( code );\n}", 7],
+		["the same body with comments", ".ts", "function f(code) { /* why */ g(code); // note\n}", 7],
+		["an arrow's expression body", ".ts", "const f = (a) => a + 1;", 3],
+		["two statements", ".js", "function f(a) { g(a); return a; }", 10],
+		["a Python one-call body", ".py", "def f(code):\n    # note\n    g(code)\n", 4],
+		["a C return", ".c", "int f(int code) { return g(code); }", 8],
+	])("%s", (_case, ext, code, tokens) => {
+		expect(tokensOf(ext, code)).toBe(tokens);
+	});
+});
+
 describe("excess: each scope's distance over 10, summed per file", () => {
 	/** A TypeScript body with `k` decisions, so its scope's cc is k + 1. */
 	const ifs = (k: number) =>

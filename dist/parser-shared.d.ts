@@ -19,6 +19,15 @@ export type OnTree = (rootNode: SyntaxNode, parsed: ParsedFile) => void;
  */
 export declare function computeBodyHash(node: SyntaxNode, emptyBodies: string[]): string;
 /**
+ * Count a function body's tokens: tree-sitter's leaf nodes under its `body`
+ * field, comments excluded. Language-neutral and formatting-insensitive, so
+ * `{ super(code); }` is 7 tokens however it is laid out. Clone detection uses
+ * it to tell a trivial body from a real duplicate.
+ * @param node - AST node containing a "body" child field.
+ * @returns The body's token count, or 0 when the node has no body.
+ */
+export declare function countBodyTokens(node: SyntaxNode): number;
+/**
  * Count the number of meaningful parameters on a function node.
  * @param node - AST node containing a "parameters" child field.
  * @param paramTypes - Grammar-specific node types that count as parameters.

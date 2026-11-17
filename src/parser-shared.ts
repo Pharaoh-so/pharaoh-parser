@@ -35,6 +35,33 @@ export function computeBodyHash(
 }
 
 /**
+ * Count a function body's tokens: tree-sitter's leaf nodes under its `body`
+ * field, comments excluded. Language-neutral and formatting-insensitive, so
+ * `{ super(code); }` is 7 tokens however it is laid out. Clone detection uses
+ * it to tell a trivial body from a real duplicate.
+ * @param node - AST node containing a "body" child field.
+ * @returns The body's token count, or 0 when the node has no body.
+ */
+export function countBodyTokens(node: SyntaxNode): number {
+	const body = node.childForFieldName("body");
+	if (!body) return 0;
+	let tokens = 0;
+	const stack: SyntaxNode[] = [body];
+	for (let current = stack.pop(); current; current = stack.pop()) {
+		if (current.type === "comment" || current.type.endsWith("_comment")) continue;
+		if (current.childCount === 0) {
+			tokens++;
+			continue;
+		}
+		for (let i = 0; i < current.childCount; i++) {
+			const child = current.child(i);
+			if (child) stack.push(child);
+		}
+	}
+	return tokens;
+}
+
+/**
  * Count the number of meaningful parameters on a function node.
  * @param node - AST node containing a "parameters" child field.
  * @param paramTypes - Grammar-specific node types that count as parameters.

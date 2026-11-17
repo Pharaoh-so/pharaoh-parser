@@ -4,6 +4,7 @@ import {
 	type FileComplexity,
 	type OnTree,
 	computeBodyHash as computeBodyHashShared,
+	countBodyTokens,
 	computeComplexity as computeComplexityShared,
 	countParams as countParamsShared,
 	fileComplexity,
@@ -274,6 +275,7 @@ function extractFunction(
 		className,
 		jsdoc: docstring,
 		bodyHash: computeBodyHash(node),
+		bodyTokens: countBodyTokens(node),
 		paramCount: countParams(node),
 		...(decorators?.length ? { decorators } : {}),
 	});

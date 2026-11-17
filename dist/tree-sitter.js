@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { SECRET_NAME_SUFFIX, computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { SECRET_NAME_SUFFIX, computeBodyHash as computeBodyHashShared, countBodyTokens, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { componentNameFromPath, isClassComponentHook, readOptionsApi, readSetupBindings, readTemplateRefs, readVueSfc, } from "./vue-sfc.js";
 import { Parser, jsLanguage, tsLanguage, tsxLanguage, } from "./wasm-init.js";
@@ -678,6 +678,7 @@ function buildFunctionMetadata(node, source, name) {
         isAsync,
         jsdoc,
         bodyHash,
+        bodyTokens: countBodyTokens(node),
         paramCount,
         cc,
         throws: errorFlow.throws || undefined,
@@ -786,6 +787,7 @@ function pushFunctionValue(holder, name, valueNode, source, functions, className
             .startsWith("async"),
         jsdoc: extractJSDoc(holder),
         bodyHash: computeBodyHash(valueNode),
+        bodyTokens: countBodyTokens(valueNode),
         paramCount: countParams(valueNode),
         cc: ccOf(valueNode),
         ...buildPropsMetadata(valueNode),
@@ -944,6 +946,7 @@ function extractVariableDeclaration(node, source, functions, exports) {
                 isAsync,
                 jsdoc,
                 bodyHash: computeBodyHash(valueNode),
+                bodyTokens: countBodyTokens(valueNode),
                 paramCount: countParams(valueNode),
                 cc: ccOf(valueNode),
                 ...buildPropsMetadata(valueNode),
