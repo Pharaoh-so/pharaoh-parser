@@ -293,3 +293,24 @@ describe("excess: each scope's distance over 10, summed per file", () => {
 		).toBe(5);
 	});
 });
+
+describe("the parser's own code", () => {
+	// Pharaoh's Health plan split the ten functions that held 78% of this
+	// repo's excess. Breaks when one of them grows past 10 again, or is renamed
+	// without updating this list.
+	const SPLIT: [file: string, name: string][] = [
+		["c-cpp-macros.ts", "blankNames"],
+		["c-cpp-macros.ts", "firstBranches"],
+		["c-cpp-tree-sitter.ts", "read"],
+	];
+
+	it.each(SPLIT)("%s: %s stays at cc 10 or less", (file, name) => {
+		const parsed = parseTs(
+			path.resolve(__dirname, "../src", file),
+			`src/${file}`,
+		);
+		const cc = parsed.functions.find((fn) => fn.name === name)?.cc;
+		expect(cc).toBeTypeOf("number");
+		expect(cc).toBeLessThanOrEqual(10);
+	});
+});
