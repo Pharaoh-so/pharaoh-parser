@@ -427,6 +427,77 @@ describe("default-exported declarations", () => {
 	});
 });
 
+describe("re-exports", () => {
+	const parseLines = (lines: string[]) => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "re-exports-"));
+		try {
+			const file = path.join(dir, "index.ts");
+			fs.writeFileSync(file, lines.join("\n"));
+			return parseFile(file, "index.ts");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	};
+
+	it("exports a renamed re-export under its new name, and imports the original", () => {
+		// Breaks if `export { default as Button }` is recorded as an export named
+		// default: an importer asks this file for Button, which it then lacks.
+		const parsed = parseLines([
+			"export { default as Button } from './Button';",
+			"export { a, b as c } from './ab';",
+		]);
+		expect(parsed.exports).toEqual([
+			{ name: "Button", kind: "re-export", isDefault: false },
+			{ name: "a", kind: "re-export", isDefault: false },
+			{ name: "c", kind: "re-export", isDefault: false },
+		]);
+		expect(parsed.imports).toEqual([
+			{
+				source: "./Button",
+				symbols: ["default"],
+				isDefault: false,
+				isNamespace: false,
+				line: 1,
+			},
+			{
+				source: "./ab",
+				symbols: ["a", "b"],
+				isDefault: false,
+				isNamespace: false,
+				line: 2,
+			},
+		]);
+	});
+
+	it("records `export * as ns` as an export named ns over a namespace import", () => {
+		// Breaks if `export * as ns` records nothing (its `*` sits inside
+		// namespace_export), or reads as `export *`, which re-exports every name.
+		const parsed = parseLines([
+			"export * as ns from './x';",
+			"export * from './all';",
+		]);
+		expect(parsed.exports).toEqual([
+			{ name: "ns", kind: "re-export", isDefault: false },
+		]);
+		expect(parsed.imports).toEqual([
+			{
+				source: "./x",
+				symbols: ["ns"],
+				isDefault: false,
+				isNamespace: true,
+				line: 1,
+			},
+			{
+				source: "./all",
+				symbols: ["*"],
+				isDefault: false,
+				isNamespace: true,
+				line: 2,
+			},
+		]);
+	});
+});
+
 describe("class heads", () => {
 	it("reads extends, implements and decorators, cutting a long decorator to 500 characters", () => {
 		// Breaks if a class loses its extends, its implements or its decorators
