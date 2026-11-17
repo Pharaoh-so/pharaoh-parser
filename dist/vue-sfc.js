@@ -86,45 +86,55 @@ const MACROS = new Set([
  * defineEmits()`) are left out: those are props and emits, not script code.
  */
 export function readSetupBindings(root) {
-    const names = new Set();
-    const namespaces = new Set();
+    const bindings = { names: new Set(), namespaces: new Set() };
     for (const statement of root.namedChildren) {
         const node = statement.type === "export_statement"
             ? statement.childForFieldName("declaration")
             : statement;
-        switch (node?.type) {
-            case "import_statement":
-                for (const { name, namespace } of importedNames(node)) {
-                    names.add(name);
-                    if (namespace)
-                        namespaces.add(name);
-                }
-                break;
-            case "function_declaration":
-            case "generator_function_declaration":
-            case "class_declaration":
-            case "abstract_class_declaration":
-            case "enum_declaration": {
-                const name = node.childForFieldName("name");
-                if (name)
-                    names.add(name.text);
-                break;
-            }
-            case "lexical_declaration":
-            case "variable_declaration":
-                for (const declarator of node.namedChildren) {
-                    if (declarator.type !== "variable_declarator")
-                        continue;
-                    if (isMacroCall(declarator.childForFieldName("value")))
-                        continue;
-                    for (const name of patternNames(declarator.childForFieldName("name"))) {
-                        names.add(name);
-                    }
-                }
-                break;
+        if (node)
+            addSetupBindings(node, bindings);
+    }
+    return bindings;
+}
+/** Declarations that bind their one `name`. */
+const NAMED_DECLARATIONS = new Set([
+    "function_declaration",
+    "generator_function_declaration",
+    "class_declaration",
+    "abstract_class_declaration",
+    "enum_declaration",
+]);
+/** Add the names one top-level statement of <script setup> binds (see readSetupBindings). */
+function addSetupBindings(node, { names, namespaces }) {
+    if (node.type === "import_statement") {
+        for (const { name, namespace } of importedNames(node)) {
+            names.add(name);
+            if (namespace)
+                namespaces.add(name);
         }
     }
-    return { names, namespaces };
+    else if (NAMED_DECLARATIONS.has(node.type)) {
+        const name = node.childForFieldName("name");
+        if (name)
+            names.add(name.text);
+    }
+    else if (node.type === "lexical_declaration" ||
+        node.type === "variable_declaration") {
+        for (const name of declaredNames(node))
+            names.add(name);
+    }
+}
+/** Names a variable declaration binds, leaving out those bound to a compiler macro. */
+function declaredNames(node) {
+    const names = [];
+    for (const declarator of node.namedChildren) {
+        if (declarator.type !== "variable_declarator")
+            continue;
+        if (isMacroCall(declarator.childForFieldName("value")))
+            continue;
+        names.push(...patternNames(declarator.childForFieldName("name")));
+    }
+    return names;
 }
 /** Local names an import binds as values (type-only imports bind none). */
 function importedNames(node) {
