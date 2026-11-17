@@ -23,7 +23,9 @@ import {
 } from "./types.js";
 import {
 	type MemberTargets,
+	type OptionsApi,
 	type OptionsMember,
+	type TemplateScope,
 	type VueSfc,
 	componentNameFromPath,
 	isClassComponentHook,
@@ -385,87 +387,25 @@ function addVueComponent(
 	const componentName = classComponent ?? componentNameFromPath(parsed.path);
 
 	const options = readOptionsApi(root);
-	const runtimeRefs: ParsedTemplateRef[] = [];
+	const targets = addOptionsMembers(
+		options,
+		sfc.script.code,
+		parsed,
+		componentName,
+	);
 	// What a template name reaches on the class. A class component's own
 	// methods first; Vue 3 then defines Options methods, then computed
 	// properties, so a computed wins over a method of the same name.
 	const members = new Map<string, MemberTargets>();
-	const methodTargets = new Map<string, MemberTargets>();
-	const computedTargets = new Map<string, MemberTargets>();
-	const taken = new Set(
-		parsed.functions
-			.filter((f) => f.className === componentName)
-			.map((f) => f.name),
-	);
-	for (const member of options?.members ?? []) {
-		const fn = extractOptionsMember(
-			member,
-			uniqueName(member.name, taken),
-			sfc.script.code,
-			parsed.functions,
-			componentName,
-		);
-		if (!fn) continue;
-		taken.add(fn.name);
-		if (member.reach === "runtime") {
-			runtimeRefs.push({
-				name: fn.name,
-				kind: "runtime",
-				line: fn.lineStart,
-				className: componentName,
-			});
-		} else if (member.role === "get" || member.role === "set") {
-			const accessors = computedTargets.get(member.key) ?? {};
-			if (member.role === "get") accessors.read = fn.name;
-			else accessors.write = fn.name;
-			computedTargets.set(member.key, accessors);
-		} else {
-			methodTargets.set(member.key, { read: fn.name });
-		}
-	}
-	for (const { name, line, isMethod } of options?.watcherTargets ?? []) {
-		runtimeRefs.push(
-			isMethod
-				? {
-						name: methodTargets.get(name)?.read ?? name,
-						kind: "runtime",
-						line,
-						className: componentName,
-					}
-				: { name, kind: "runtime", line },
-		);
-	}
-
 	if (classComponent) {
-		for (const fn of parsed.functions) {
-			if (fn.className !== classComponent) continue;
-			members.set(fn.name, { read: fn.name });
-			if (isClassComponentHook(fn.name, fn.decorators)) {
-				runtimeRefs.push({
-					name: fn.name,
-					kind: "runtime",
-					line: fn.lineStart,
-					className: classComponent,
-				});
-			}
-		}
+		addClassComponentMembers(
+			parsed.functions,
+			classComponent,
+			members,
+			targets.runtimeRefs,
+		);
 	} else {
-		const methods = parsed.functions
-			.filter((f) => f.className === componentName)
-			.map((f) => f.name);
-		parsed.classes.push({
-			name: componentName,
-			lineStart: 1,
-			lineEnd: parsed.loc,
-			...computeClassMetrics(componentName, 1, parsed.loc, parsed.functions),
-			isExported: true,
-			methods: [...new Set(methods)],
-		});
-		// `export default { ... }` was recorded with the object's source as its name
-		parsed.exports = [
-			...parsed.exports.filter((e) => !e.isDefault),
-			{ name: componentName, kind: "class", isDefault: true },
-		];
+		addComponentClass(parsed, componentName);
 	}
 
 	if (sfc.scriptSrc) {
@@ -478,10 +418,151 @@ function addVueComponent(
 		});
 	}
 
-	for (const [key, targets] of [...methodTargets, ...computedTargets]) {
-		members.set(key, targets);
+	for (const [key, reached] of [...targets.methods, ...targets.computed]) {
+		members.set(key, reached);
 	}
-	const { refs, unverified } = readTemplateRefs(sfc.descriptor, {
+	const { refs, unverified } = readTemplateRefs(
+		sfc.descriptor,
+		templateScope(root, sfc, options, members, componentName),
+	);
+	const templateRefs = [...refs, ...targets.runtimeRefs];
+	if (templateRefs.length > 0) parsed.templateRefs = templateRefs;
+	if (unverified.length > 0) parsed.unverifiedTemplateRefs = unverified;
+}
+
+/** What a component's Options API members add (see addVueComponent). */
+interface OptionsTargets {
+	/** Members and watchers the Vue runtime calls itself, in the order they are found. */
+	runtimeRefs: ParsedTemplateRef[];
+	/** What each Options method's key reaches. */
+	methods: Map<string, MemberTargets>;
+	/** What each computed property's key reaches: its getter and setter. */
+	computed: Map<string, MemberTargets>;
+}
+
+/**
+ * Extract the Options API members holding a function as methods of the
+ * component class, each under a name the class doesn't have yet, and record
+ * what each member's key reaches and which ones the Vue runtime calls,
+ * watchers included.
+ */
+function addOptionsMembers(
+	options: OptionsApi | null,
+	source: string,
+	parsed: ParsedFile,
+	componentName: string,
+): OptionsTargets {
+	const targets: OptionsTargets = {
+		runtimeRefs: [],
+		methods: new Map(),
+		computed: new Map(),
+	};
+	const taken = new Set(
+		parsed.functions
+			.filter((f) => f.className === componentName)
+			.map((f) => f.name),
+	);
+	for (const member of options?.members ?? []) {
+		const fn = extractOptionsMember(
+			member,
+			uniqueName(member.name, taken),
+			source,
+			parsed.functions,
+			componentName,
+		);
+		if (!fn) continue;
+		taken.add(fn.name);
+		recordMember(targets, member, fn, componentName);
+	}
+	for (const { name, line, isMethod } of options?.watcherTargets ?? []) {
+		targets.runtimeRefs.push(
+			isMethod
+				? {
+						name: targets.methods.get(name)?.read ?? name,
+						kind: "runtime",
+						line,
+						className: componentName,
+					}
+				: { name, kind: "runtime", line },
+		);
+	}
+	return targets;
+}
+
+/** Record what an extracted Options member reaches: a runtime call, a computed's accessor, or a method. */
+function recordMember(
+	targets: OptionsTargets,
+	member: OptionsMember,
+	fn: ParsedFunction,
+	componentName: string,
+): void {
+	if (member.reach === "runtime") {
+		targets.runtimeRefs.push({
+			name: fn.name,
+			kind: "runtime",
+			line: fn.lineStart,
+			className: componentName,
+		});
+	} else if (member.role === "get" || member.role === "set") {
+		const accessors = targets.computed.get(member.key) ?? {};
+		if (member.role === "get") accessors.read = fn.name;
+		else accessors.write = fn.name;
+		targets.computed.set(member.key, accessors);
+	} else {
+		targets.methods.set(member.key, { read: fn.name });
+	}
+}
+
+/** A class component's methods as what template names reach, and its lifecycle hooks as runtime calls. */
+function addClassComponentMembers(
+	functions: ParsedFunction[],
+	classComponent: string,
+	members: Map<string, MemberTargets>,
+	runtimeRefs: ParsedTemplateRef[],
+): void {
+	for (const fn of functions) {
+		if (fn.className !== classComponent) continue;
+		members.set(fn.name, { read: fn.name });
+		if (isClassComponentHook(fn.name, fn.decorators)) {
+			runtimeRefs.push({
+				name: fn.name,
+				kind: "runtime",
+				line: fn.lineStart,
+				className: classComponent,
+			});
+		}
+	}
+}
+
+/** Add the component as a default-exported class spanning the file, its methods the functions named on it. */
+function addComponentClass(parsed: ParsedFile, componentName: string): void {
+	const methods = parsed.functions
+		.filter((f) => f.className === componentName)
+		.map((f) => f.name);
+	parsed.classes.push({
+		name: componentName,
+		lineStart: 1,
+		lineEnd: parsed.loc,
+		...computeClassMetrics(componentName, 1, parsed.loc, parsed.functions),
+		isExported: true,
+		methods: [...new Set(methods)],
+	});
+	// `export default { ... }` was recorded with the object's source as its name
+	parsed.exports = [
+		...parsed.exports.filter((e) => !e.isDefault),
+		{ name: componentName, kind: "class", isDefault: true },
+	];
+}
+
+/** What the component's template can name: `<script setup>` bindings, its members, and its registered aliases, components and directives. */
+function templateScope(
+	root: SyntaxNode,
+	sfc: VueSfc,
+	options: OptionsApi | null,
+	members: Map<string, MemberTargets>,
+	componentName: string,
+): TemplateScope {
+	return {
 		setup: sfc.hasScriptSetup
 			? readSetupBindings(root)
 			: { names: new Set(), namespaces: new Set() },
@@ -490,10 +571,7 @@ function addVueComponent(
 		componentName,
 		components: options?.components ?? new Map(),
 		directives: options?.directives ?? new Map(),
-	});
-	const templateRefs = [...refs, ...runtimeRefs];
-	if (templateRefs.length > 0) parsed.templateRefs = templateRefs;
-	if (unverified.length > 0) parsed.unverifiedTemplateRefs = unverified;
+	};
 }
 
 /** `name`, or `name#2`, `name#3`... when the class already has a function by that name. */
@@ -920,10 +998,7 @@ function extractFieldFunction(
 
 	const decorators = [...siblingDecorators];
 	for (const child of field.children) {
-		if (child.type !== "decorator") continue;
-		let text = child.text.trim();
-		if (text.length > 500) text = `${text.slice(0, 497)}...`;
-		decorators.push(text);
+		if (child.type === "decorator") decorators.push(decoratorText(child));
 	}
 
 	const name = nameNode.text;
@@ -995,76 +1070,12 @@ function extractClass(
 
 	const name = nameNode.text;
 	const isExported = node.parent?.type === "export_statement";
-	const methods: string[] = [];
-
-	// Extract class heritage (extends / implements) and class-level decorators
-	let extendsName: string | undefined;
-	const implementsNames: string[] = [];
-	const classDecorators: string[] = parentDecorators
-		? [...parentDecorators]
-		: [];
-	for (const child of node.children) {
-		if (child.type === "decorator") {
-			let text = child.text.trim();
-			if (text.length > 500) text = `${text.slice(0, 497)}...`;
-			classDecorators.push(text);
-		} else if (child.type === "class_heritage") {
-			for (const clause of child.children) {
-				if (clause.type === "extends_clause") {
-					const valueNode = clause.child(1);
-					if (valueNode) extendsName = valueNode.text;
-				} else if (clause.type === "implements_clause") {
-					for (const typeNode of clause.children) {
-						if (
-							typeNode.type === "type_identifier" ||
-							typeNode.type === "generic_type"
-						) {
-							implementsNames.push(typeNode.text);
-						}
-					}
-				}
-			}
-		}
-	}
-
+	const head = readClassHead(node, parentDecorators);
 	// Find class body and extract methods (with decorator accumulation)
 	const bodyNode = node.childForFieldName("body");
-	if (bodyNode) {
-		let pendingDecorators: string[] = [];
-		for (const child of bodyNode.children) {
-			if (child.type === "decorator") {
-				let text = child.text.trim();
-				if (text.length > 500) text = `${text.slice(0, 497)}...`;
-				pendingDecorators.push(text);
-			} else if (child.type === "method_definition") {
-				const methodName = child.childForFieldName("name");
-				if (methodName) {
-					methods.push(methodName.text);
-					extractMethod(
-						child,
-						source,
-						functions,
-						name,
-						pendingDecorators.length > 0 ? pendingDecorators : undefined,
-					);
-				}
-				pendingDecorators = [];
-			} else if (
-				child.type === "public_field_definition" ||
-				child.type === "field_definition"
-			) {
-				const fieldName = extractFieldFunction(
-					child,
-					source,
-					functions,
-					name,
-					pendingDecorators,
-				);
-				if (fieldName) methods.push(fieldName);
-				pendingDecorators = [];
-			}
-		}
-	}
+	const methods = bodyNode
+		? readClassBody(bodyNode, source, functions, name)
+		: [];
 
 	const lineStart = node.startPosition.row + 1;
 	const lineEnd = node.endPosition.row + 1;
@@ -1083,9 +1094,10 @@ function extractClass(
 		complexity,
 		isExported,
 		methods,
-		extends: extendsName,
-		implements: implementsNames.length > 0 ? implementsNames : undefined,
-		decorators: classDecorators.length > 0 ? classDecorators : undefined,
+		extends: head.extendsName,
+		implements:
+			head.implementsNames.length > 0 ? head.implementsNames : undefined,
+		decorators: head.decorators.length > 0 ? head.decorators : undefined,
 	});
 
 	if (isExported) {
@@ -1095,6 +1107,103 @@ function extractClass(
 			isDefault: isDefaultExportDeclaration(node),
 		});
 	}
+}
+
+/** A decorator's text, trimmed and cut to 500 characters. */
+function decoratorText(decorator: SyntaxNode): string {
+	const text = decorator.text.trim();
+	return text.length > 500 ? `${text.slice(0, 497)}...` : text;
+}
+
+/** What a class declaration says before its body (see readClassHead). */
+interface ClassHead {
+	/** The class it extends, as written. */
+	extendsName?: string;
+	/** The types it implements, as written. */
+	implementsNames: string[];
+	/** Its decorators: the export statement's first, then its own. */
+	decorators: string[];
+}
+
+/** Read a class's heritage (extends / implements) and class-level decorators. */
+function readClassHead(
+	node: SyntaxNode,
+	parentDecorators: string[] | undefined,
+): ClassHead {
+	const head: ClassHead = {
+		implementsNames: [],
+		decorators: parentDecorators ? [...parentDecorators] : [],
+	};
+	for (const child of node.children) {
+		if (child.type === "decorator") head.decorators.push(decoratorText(child));
+		else if (child.type === "class_heritage") readHeritage(child, head);
+	}
+	return head;
+}
+
+/** Read a `class_heritage` node's extends and implements clauses into `head`. */
+function readHeritage(heritage: SyntaxNode, head: ClassHead): void {
+	for (const clause of heritage.children) {
+		if (clause.type === "extends_clause") {
+			const valueNode = clause.child(1);
+			if (valueNode) head.extendsName = valueNode.text;
+		} else if (clause.type === "implements_clause") {
+			for (const typeNode of clause.children) {
+				if (
+					typeNode.type === "type_identifier" ||
+					typeNode.type === "generic_type"
+				) {
+					head.implementsNames.push(typeNode.text);
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Extract a class body's methods and function-valued fields as functions of
+ * `className`, each with the decorators just above it, and return their names.
+ */
+function readClassBody(
+	bodyNode: SyntaxNode,
+	source: string,
+	functions: ParsedFunction[],
+	className: string,
+): string[] {
+	const methods: string[] = [];
+	let pendingDecorators: string[] = [];
+	for (const child of bodyNode.children) {
+		if (child.type === "decorator") {
+			pendingDecorators.push(decoratorText(child));
+		} else if (child.type === "method_definition") {
+			const methodName = child.childForFieldName("name");
+			if (methodName) {
+				methods.push(methodName.text);
+				extractMethod(
+					child,
+					source,
+					functions,
+					className,
+					pendingDecorators.length > 0 ? pendingDecorators : undefined,
+				);
+			}
+			pendingDecorators = [];
+		} else if (
+			child.type === "public_field_definition" ||
+			child.type === "field_definition"
+		) {
+			const fieldName = extractFieldFunction(
+				child,
+				source,
+				functions,
+				className,
+				pendingDecorators,
+			);
+			if (fieldName) methods.push(fieldName);
+			pendingDecorators = [];
+		}
+	}
+	return methods;
 }
 
 /**
@@ -1257,14 +1366,51 @@ function extractExportStatement(
 ): void {
 	// Check for default export
 	const isDefault = node.children.some((c) => c.type === "default");
-
-	// Handle: export * from './foo' (star re-export → import edge with namespace wildcard)
 	const sourceNode = node.children.find(
 		(c) => c.type === "string" || c.type === "string_fragment",
 	);
-	const hasStar = node.children.some((c) => c.type === "*");
-	if (hasStar && sourceNode) {
-		const sourceText = sourceNode.text.replace(/['"]/g, "");
+	const exportClause = node.children.find((c) => c.type === "export_clause");
+	if (
+		sourceNode &&
+		extractReExport(node, sourceNode, exportClause, imports, exports)
+	) {
+		return;
+	}
+
+	// Collect decorators from the export_statement (for exported decorated classes)
+	const decorators = exportDecorators(node);
+	// Handle exported declarations — recurse into the declaration
+	for (const child of node.children) {
+		extractExportedDeclaration(
+			child,
+			source,
+			functions,
+			classes,
+			exports,
+			isDefault,
+			decorators,
+		);
+	}
+
+	// Handle: export default <expression>
+	if (isDefault && !exportClause) extractDefaultExpression(node, exports);
+}
+
+/**
+ * Extract an export statement that re-exports from another module, and say
+ * whether it was one:
+ * - `export * from './foo'`: an import edge with the namespace wildcard;
+ * - `export { X } from './foo'`: an export per name, and an import edge.
+ */
+function extractReExport(
+	node: SyntaxNode,
+	sourceNode: SyntaxNode,
+	exportClause: SyntaxNode | undefined,
+	imports: ParsedImport[],
+	exports: ParsedExport[],
+): boolean {
+	const sourceText = sourceNode.text.replace(/['"]/g, "");
+	if (node.children.some((c) => c.type === "*")) {
 		imports.push({
 			source: sourceText,
 			symbols: ["*"],
@@ -1272,126 +1418,105 @@ function extractExportStatement(
 			isNamespace: true,
 			line: node.startPosition.row + 1,
 		});
-		return;
+		return true;
 	}
+	if (!exportClause) return false;
+	const symbols = reExportSymbols(exportClause, exports);
+	// Create an import edge so the resolver can trace through re-exports
+	if (symbols.length > 0) {
+		imports.push({
+			source: sourceText,
+			symbols,
+			isDefault: false,
+			isNamespace: false,
+			line: node.startPosition.row + 1,
+		});
+	}
+	return true;
+}
 
-	// Handle: export { X } from './foo' (named re-export → export + import edge)
-	const exportClause = node.children.find((c) => c.type === "export_clause");
+/** Export each name an `export { ... } from` clause re-exports, and return the original names for the import edge. */
+function reExportSymbols(
+	exportClause: SyntaxNode,
+	exports: ParsedExport[],
+): string[] {
+	const symbols: string[] = [];
+	for (const spec of exportClause.children) {
+		if (spec.type !== "export_specifier") continue;
+		const nameNode =
+			spec.childForFieldName("name") ?? spec.childForFieldName("alias");
+		if (!nameNode) continue;
+		exports.push({ name: nameNode.text, kind: "re-export", isDefault: false });
+		// Use the original name (not alias) for the import edge
+		const originalName = spec.childForFieldName("name");
+		symbols.push(originalName ? originalName.text : nameNode.text);
+	}
+	return symbols;
+}
 
-	if (exportClause && sourceNode) {
-		const sourceText = sourceNode.text.replace(/['"]/g, "");
-		const reExportSymbols: string[] = [];
+/** An export statement's own decorators (`@Injectable() export class X`), or undefined when it has none. */
+function exportDecorators(node: SyntaxNode): string[] | undefined {
+	const decorators = node.children
+		.filter((c) => c.type === "decorator")
+		.map((c) => decoratorText(c));
+	return decorators.length > 0 ? decorators : undefined;
+}
 
-		for (const spec of exportClause.children) {
-			if (spec.type === "export_specifier") {
-				const nameNode =
-					spec.childForFieldName("name") ?? spec.childForFieldName("alias");
-				if (nameNode) {
-					exports.push({
-						name: nameNode.text,
-						kind: "re-export",
-						isDefault: false,
-					});
-					// Use the original name (not alias) for the import edge
-					const originalName = spec.childForFieldName("name");
-					reExportSymbols.push(
-						originalName ? originalName.text : nameNode.text,
-					);
-				}
+/** Extract one declaration an export statement exports: a function, class, variables, type, interface or enum. */
+function extractExportedDeclaration(
+	child: SyntaxNode,
+	source: string,
+	functions: ParsedFunction[],
+	classes: ParsedClass[],
+	exports: ParsedExport[],
+	isDefault: boolean,
+	decorators: string[] | undefined,
+): void {
+	switch (child.type) {
+		case "function_declaration":
+			extractFunction(child, source, functions, exports);
+			break;
+		case "class_declaration":
+			extractClass(child, source, classes, functions, exports, decorators);
+			break;
+		case "lexical_declaration":
+		case "variable_declaration":
+			extractVariableDeclaration(child, source, functions, exports);
+			break;
+		case "type_alias_declaration":
+		case "interface_declaration": {
+			const nameNode = child.childForFieldName("name");
+			if (nameNode) {
+				exports.push({ name: nameNode.text, kind: "type", isDefault });
 			}
+			break;
 		}
-
-		// Create an import edge so the resolver can trace through re-exports
-		if (reExportSymbols.length > 0) {
-			imports.push({
-				source: sourceText,
-				symbols: reExportSymbols,
-				isDefault: false,
-				isNamespace: false,
-				line: node.startPosition.row + 1,
-			});
-		}
-		return;
+		case "enum_declaration":
+			extractEnum(child, exports);
+			break;
 	}
+}
 
-	// Collect decorators from the export_statement (for exported decorated classes)
-	const exportDecorators: string[] = [];
-	for (const child of node.children) {
-		if (child.type === "decorator") {
-			let text = child.text.trim();
-			if (text.length > 500) text = `${text.slice(0, 497)}...`;
-			exportDecorators.push(text);
-		}
-	}
-
-	// Handle exported declarations — recurse into the declaration
-	for (const child of node.children) {
-		switch (child.type) {
-			case "function_declaration":
-				extractFunction(child, source, functions, exports);
-				break;
-			case "class_declaration":
-				extractClass(
-					child,
-					source,
-					classes,
-					functions,
-					exports,
-					exportDecorators.length > 0 ? exportDecorators : undefined,
-				);
-				break;
-			case "lexical_declaration":
-			case "variable_declaration":
-				extractVariableDeclaration(child, source, functions, exports);
-				break;
-			case "type_alias_declaration": {
-				const typeNameNode = child.childForFieldName("name");
-				if (typeNameNode) {
-					exports.push({
-						name: typeNameNode.text,
-						kind: "type",
-						isDefault,
-					});
-				}
-				break;
-			}
-			case "interface_declaration": {
-				const ifaceNameNode = child.childForFieldName("name");
-				if (ifaceNameNode) {
-					exports.push({
-						name: ifaceNameNode.text,
-						kind: "type",
-						isDefault,
-					});
-				}
-				break;
-			}
-			case "enum_declaration":
-				extractEnum(child, exports);
-				break;
-		}
-	}
-
-	// Handle: export default <expression>
-	if (isDefault && !exportClause) {
-		const hasDecl = node.children.some(
-			(c) =>
-				c.type === "function_declaration" ||
-				c.type === "class_declaration" ||
-				c.type === "lexical_declaration",
-		);
-		if (!hasDecl) {
-			// Default export of an expression (e.g. export default app)
-			const exprNode = node.children.find(
-				(c) => c.type !== "export" && c.type !== "default" && c.type !== ";",
-			);
-			exports.push({
-				name: exprNode?.text ?? "default",
-				kind: "variable",
-				isDefault: true,
-			});
-		}
-	}
+/** `export default app`: a default export of an expression, named by its text. */
+function extractDefaultExpression(
+	node: SyntaxNode,
+	exports: ParsedExport[],
+): void {
+	const hasDecl = node.children.some(
+		(c) =>
+			c.type === "function_declaration" ||
+			c.type === "class_declaration" ||
+			c.type === "lexical_declaration",
+	);
+	if (hasDecl) return;
+	const exprNode = node.children.find(
+		(c) => c.type !== "export" && c.type !== "default" && c.type !== ";",
+	);
+	exports.push({
+		name: exprNode?.text ?? "default",
+		kind: "variable",
+		isDefault: true,
+	});
 }
 
 function extractImport(node: SyntaxNode, imports: ParsedImport[]): void {

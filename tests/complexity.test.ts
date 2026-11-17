@@ -295,13 +295,16 @@ describe("excess: each scope's distance over 10, summed per file", () => {
 });
 
 describe("the parser's own code", () => {
-	// Pharaoh's Health plan split the ten functions that held 78% of this
-	// repo's excess. Breaks when one of them grows past 10 again, or is renamed
-	// without updating this list.
+	// Pharaoh's Health plan splits the ten functions that held 78% of this
+	// repo's excess; each is listed here once it is split. Breaks when one of
+	// them grows past 10 again, or is renamed without updating this list.
 	const SPLIT: [file: string, name: string][] = [
 		["c-cpp-macros.ts", "blankNames"],
 		["c-cpp-macros.ts", "firstBranches"],
 		["c-cpp-tree-sitter.ts", "read"],
+		["tree-sitter.ts", "extractExportStatement"],
+		["tree-sitter.ts", "extractClass"],
+		["tree-sitter.ts", "addVueComponent"],
 	];
 
 	it.each(SPLIT)("%s: %s stays at cc 10 or less", (file, name) => {
