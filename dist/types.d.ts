@@ -31,6 +31,12 @@ export interface ParsedFunction {
      * nested functions too, and `else` in TS/JS), kept unchanged for existing readers.
      */
     cc?: number;
+    /**
+     * Tokens in the body: tree-sitter leaf nodes, comments excluded
+     * (countBodyTokens). Clone detection skips bodies too small to be a real
+     * duplicate. Set by every parseFile.
+     */
+    bodyTokens?: number;
 }
 export interface ParsedClass {
     name: string;

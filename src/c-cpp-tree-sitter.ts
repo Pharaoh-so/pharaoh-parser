@@ -32,6 +32,7 @@ import {
 	SECRET_NAME_SUFFIX,
 	computeBodyHash,
 	computeComplexity,
+	countBodyTokens,
 	countParams,
 	fileComplexity,
 	ownComplexity,
@@ -426,6 +427,7 @@ function readFunction(
 		isAsync: false,
 		...(className ? { className } : {}),
 		bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
+		bodyTokens: countBodyTokens(owner),
 		// `f(void)` takes nothing
 		paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
 	};

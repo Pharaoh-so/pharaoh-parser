@@ -23,7 +23,7 @@ import path from "node:path";
 import { Language, Query } from "web-tree-sitter";
 import { blankMacros, firstBranches } from "./c-cpp-macros.js";
 export { collectAttributeMacros } from "./c-cpp-macros.js";
-import { COMPLEXITY_THRESHOLD, SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countParams, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { COMPLEXITY_THRESHOLD, SECRET_NAME_SUFFIX, computeBodyHash, computeComplexity, countBodyTokens, countParams, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser } from "./wasm-init.js";
 export { C_CPP_EXTENSIONS } from "./file-walker.js";
@@ -316,6 +316,7 @@ function readFunction(declared, node, reading) {
         isAsync: false,
         ...(className ? { className } : {}),
         bodyHash: computeBodyHash(owner, ["{}", "{ }"]),
+        bodyTokens: countBodyTokens(owner),
         // `f(void)` takes nothing
         paramCount: countParams(node, PARAMETER_TYPES, (p) => p.text === "void"),
     };

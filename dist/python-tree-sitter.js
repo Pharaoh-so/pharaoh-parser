@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
+import { computeBodyHash as computeBodyHashShared, computeComplexity as computeComplexityShared, countBodyTokens, countParams as countParamsShared, fileComplexity, ownComplexity, } from "./parser-shared.js";
 import { computeClassMetrics, } from "./types.js";
 import { Parser, pyLanguage } from "./wasm-init.js";
 const pyParser = new Parser();
@@ -195,6 +195,7 @@ function extractFunction(node, _source, functions, exports, allNames, className,
         className,
         jsdoc: docstring,
         bodyHash: computeBodyHash(node),
+        bodyTokens: countBodyTokens(node),
         paramCount: countParams(node),
         ...(decorators?.length ? { decorators } : {}),
     });
