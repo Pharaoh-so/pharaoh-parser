@@ -1061,6 +1061,8 @@ function extractExportStatement(node, source, functions, classes, imports, expor
  * Extract an export statement that re-exports from another module, and say
  * whether it was one:
  * - `export * from './foo'`: an import edge with the namespace wildcard;
+ * - `export * as ns from './foo'`: an export named ns, and the import edge
+ *   `import * as ns from './foo'` records;
  * - `export { X } from './foo'`: an export per name, and an import edge.
  */
 function extractReExport(node, sourceNode, exportClause, imports, exports) {
@@ -1069,6 +1071,20 @@ function extractReExport(node, sourceNode, exportClause, imports, exports) {
         imports.push({
             source: sourceText,
             symbols: ["*"],
+            isDefault: false,
+            isNamespace: true,
+            line: node.startPosition.row + 1,
+        });
+        return true;
+    }
+    // The `*` of `export * as ns` sits inside namespace_export, not on the statement.
+    const namespace = node.children.find((c) => c.type === "namespace_export")
+        ?.namedChildren[0]?.text;
+    if (namespace) {
+        exports.push({ name: namespace, kind: "re-export", isDefault: false });
+        imports.push({
+            source: sourceText,
+            symbols: [namespace],
             isDefault: false,
             isNamespace: true,
             line: node.startPosition.row + 1,
@@ -1090,19 +1106,22 @@ function extractReExport(node, sourceNode, exportClause, imports, exports) {
     }
     return true;
 }
-/** Export each name an `export { ... } from` clause re-exports, and return the original names for the import edge. */
+/**
+ * Export each name an `export { ... } from` clause re-exports, under the name
+ * the file exports it as, and return the original names for the import edge:
+ * `export { default as Button } from './Button'` exports Button and imports default.
+ */
 function reExportSymbols(exportClause, exports) {
     const symbols = [];
     for (const spec of exportClause.children) {
         if (spec.type !== "export_specifier")
             continue;
-        const nameNode = spec.childForFieldName("name") ?? spec.childForFieldName("alias");
-        if (!nameNode)
+        const original = spec.childForFieldName("name");
+        if (!original)
             continue;
-        exports.push({ name: nameNode.text, kind: "re-export", isDefault: false });
-        // Use the original name (not alias) for the import edge
-        const originalName = spec.childForFieldName("name");
-        symbols.push(originalName ? originalName.text : nameNode.text);
+        const exported = spec.childForFieldName("alias") ?? original;
+        exports.push({ name: exported.text, kind: "re-export", isDefault: false });
+        symbols.push(original.text);
     }
     return symbols;
 }
